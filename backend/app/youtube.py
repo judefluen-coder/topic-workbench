@@ -13,26 +13,13 @@ from app.config import settings
 from app.ytdlp_runtime import require_ytdlp_command
 from app.db import get_connection, now_iso
 from app.opencli_runtime import opencli_window_args, prepare_opencli_browser
-from app.scoring import (
-    interview_confidence,
-    parse_youtube_duration,
-    people_signals_for_video,
-    priority_score,
-    split_aliases,
-)
+from app.scoring import parse_youtube_duration
 from app.seed import seed_demo_videos
-from app.summaries import build_discovery_summary, looks_ai_related
+from app.summaries import build_discovery_summary
+from app.topics import discovery_queries, get_topic, topic_priority_score, topic_signals
 
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 YOUTUBE_VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
-QUERY_KEYWORDS = [
-    "AI interview",
-    "artificial intelligence interview",
-    "AI conversation",
-    "AI podcast",
-    "LLM interview",
-    "fireside chat AI",
-]
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
@@ -42,11 +29,15 @@ async def sync_youtube(
     include_demo_when_unconfigured: bool = True,
     published_after: str | None = None,
     published_before: str | None = None,
+    topic_id: int = 1,
 ) -> dict:
+    topic = get_topic(topic_id)
+    if "youtube" not in topic["sources"]:
+        return {"mode": "disabled", "inserted": 0, "message": "当前主题未启用 YouTube。"}
     if not settings.youtube_api_key:
         if settings.opencli_discovery_enabled:
             try:
-                result = _sync_with_opencli_search(limit_per_query, published_after, published_before)
+                result = _sync_with_opencli_search(limit_per_query, published_after, published_before, topic_id, topic)
                 if result["candidates"] or result["inserted"]:
                     return result
             except Exception as exc:
@@ -54,7 +45,7 @@ async def sync_youtube(
                     raise HTTPException(status_code=502, detail=f"opencli 搜索失败：{exc}") from exc
         if settings.local_ytdlp_discovery:
             try:
-                result = _sync_with_ytdlp_search(limit_per_query, published_after, published_before)
+                result = _sync_with_ytdlp_search(limit_per_query, published_after, published_before, topic_id, topic)
                 if result["inserted"] or not include_demo_when_unconfigured:
                     return result
             except Exception as exc:
@@ -66,35 +57,26 @@ async def sync_youtube(
                 "inserted": 0,
                 "message": "未配置 YOUTUBE_API_KEY；本机补充搜索没有返回区间内可验证日期的视频。未生成 demo 数据。",
             }
-        inserted = seed_demo_videos()
+        inserted = seed_demo_videos(topic_id)
         return {
             "mode": "demo",
             "inserted": inserted,
             "message": "未配置 YOUTUBE_API_KEY，且本机搜索未返回结果，已使用 demo 元数据；没有下载任何公开视频。",
         }
 
-    with get_connection() as conn:
-        people = [dict(row) for row in conn.execute("SELECT * FROM people ORDER BY priority DESC, id ASC").fetchall()]
-    if not people:
-        return {"mode": "live", "inserted": 0, "message": "人物名单为空。"}
-
     published_after_value = published_after or (datetime.now(timezone.utc) - timedelta(days=days_back)).replace(microsecond=0).isoformat()
     video_ids: set[str] = set()
     query_count = 0
     async with httpx.AsyncClient(timeout=20) as client:
-        for person in people:
-            aliases = split_aliases(person["name"], person.get("english_name", ""), person.get("aliases", ""))
-            for alias in aliases[:3]:
-                for keyword in QUERY_KEYWORDS[:3]:
-                    query = f"{alias} {keyword}"
-                    query_count += 1
-                    ids = await _search_video_ids(client, query, published_after_value, limit_per_query, published_before)
-                    video_ids.update(ids)
-                    _record_source_query(person["id"], query)
+        for query in discovery_queries(topic):
+            query_count += 1
+            ids = await _search_video_ids(client, query, published_after_value, limit_per_query, published_before)
+            video_ids.update(ids)
+            _record_source_query(topic_id, query)
 
         details = await _fetch_video_details(client, sorted(video_ids))
 
-    inserted = _upsert_video_details(details)
+    inserted = _upsert_video_details(details, topic_id, topic)
     return {
         "mode": "live",
         "queried": query_count,
@@ -149,11 +131,11 @@ async def _fetch_video_details(client: httpx.AsyncClient, ids: list[str]) -> lis
     return details
 
 
-def _record_source_query(person_id: int, query: str) -> None:
+def _record_source_query(topic_id: int, query: str, person_id: int | None = None) -> None:
     with get_connection() as conn:
         existing = conn.execute(
-            "SELECT id FROM source_queries WHERE person_id = ? AND query = ?",
-            (person_id, query),
+            "SELECT id FROM source_queries WHERE topic_id = ? AND query = ?",
+            (topic_id, query),
         ).fetchone()
         timestamp = now_iso()
         if existing:
@@ -161,18 +143,17 @@ def _record_source_query(person_id: int, query: str) -> None:
         else:
             conn.execute(
                 """
-                INSERT INTO source_queries (person_id, platform, query, last_run_at, created_at)
-                VALUES (?, 'youtube', ?, ?, ?)
+                INSERT INTO source_queries (topic_id, person_id, platform, query, last_run_at, created_at)
+                VALUES (?, ?, 'youtube', ?, ?, ?)
                 """,
-                (person_id, query, timestamp, timestamp),
+                (topic_id, person_id, query, timestamp, timestamp),
             )
 
 
-def _upsert_video_details(details: list[dict]) -> int:
+def _upsert_video_details(details: list[dict], topic_id: int, topic: dict) -> int:
     if not details:
         return 0
     with get_connection() as conn:
-        people = [dict(row) for row in conn.execute("SELECT * FROM people").fetchall()]
         inserted_or_updated = 0
         for item in details:
             snippet = item.get("snippet", {})
@@ -184,16 +165,11 @@ def _upsert_video_details(details: list[dict]) -> int:
             published_at = snippet.get("publishedAt", "")
             duration = parse_youtube_duration(content.get("duration", ""))
             channel = snippet.get("channelTitle", "")
-            matches, names, candidate_people, reason = people_signals_for_video(title, description, channel, people)
-            confidence = interview_confidence(title, description, duration)
-            score = priority_score(
-                matches,
-                confidence,
-                published_at,
-                channel,
-                int(stats.get("viewCount", 0) or 0),
-            )
-            summary = build_discovery_summary(title, description, channel, names or candidate_people)
+            matches, names, candidate_people, reason, confidence = topic_signals(title, description, channel, topic)
+            if confidence <= 0:
+                continue
+            score = topic_priority_score(matches, confidence, published_at, int(stats.get("viewCount", 0) or 0), topic["ranking_mode"])
+            summary = build_discovery_summary(title, description, channel, names or candidate_people, topic["name"], topic["keywords"])
             thumbnails = snippet.get("thumbnails", {})
             thumbnail_url = (
                 thumbnails.get("high", {}).get("url")
@@ -204,12 +180,12 @@ def _upsert_video_details(details: list[dict]) -> int:
             cursor = conn.execute(
                 """
                 INSERT INTO videos (
-                  platform, external_id, url, title, description, channel_title, published_at,
+                  topic_id, platform, external_id, url, title, description, channel_title, published_at,
                   duration_seconds, view_count, like_count, thumbnail_url, matched_people,
                   candidate_people, people_match_reason, interview_confidence, priority_score, status, compliance_note, summary, source_tier, created_at, updated_at
                 )
-                VALUES ('youtube', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', 'metadata_only', ?, 'stable', ?, ?)
-                ON CONFLICT(platform, external_id) DO UPDATE SET
+                VALUES (?, 'youtube', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', 'metadata_only', ?, 'stable', ?, ?)
+                ON CONFLICT(topic_id, platform, external_id) DO UPDATE SET
                   title = excluded.title,
                   description = excluded.description,
                   channel_title = excluded.channel_title,
@@ -228,6 +204,7 @@ def _upsert_video_details(details: list[dict]) -> int:
                   updated_at = excluded.updated_at
                 """,
                 (
+                    topic_id,
                     external_id,
                     f"https://www.youtube.com/watch?v={external_id}",
                     title,
@@ -252,23 +229,21 @@ def _upsert_video_details(details: list[dict]) -> int:
         return inserted_or_updated
 
 
-def _sync_with_ytdlp_search(limit_per_query: int, published_after: str | None = None, published_before: str | None = None) -> dict:
-    with get_connection() as conn:
-        people = [dict(row) for row in conn.execute("SELECT * FROM people ORDER BY priority DESC, id ASC LIMIT 10").fetchall()]
-    if not people:
-        return {"mode": "local_yt_dlp_search", "inserted": 0, "message": "人物名单为空。"}
-
+def _sync_with_ytdlp_search(
+    limit_per_query: int,
+    published_after: str | None,
+    published_before: str | None,
+    topic_id: int,
+    topic: dict,
+) -> dict:
     items: list[dict] = []
     query_count = 0
-    for person in people:
-        aliases = split_aliases(person["name"], person.get("english_name", ""), person.get("aliases", ""))
-        alias = aliases[0] if aliases else person["name"]
-        query = f"{alias} AI interview"
+    for query in discovery_queries(topic, limit=8):
         query_count += 1
         items.extend(_run_ytdlp_search(query, min(limit_per_query, 3)))
-        _record_source_query(person["id"], f"yt-dlp:{query}")
+        _record_source_query(topic_id, f"yt-dlp:{query}")
 
-    inserted = _upsert_ytdlp_items(items, published_after, published_before)
+    inserted = _upsert_ytdlp_items(items, published_after, published_before, topic_id, topic)
     return {
         "mode": "local_yt_dlp_search",
         "queried": query_count,
@@ -278,12 +253,18 @@ def _sync_with_ytdlp_search(limit_per_query: int, published_after: str | None = 
     }
 
 
-def _sync_with_opencli_search(limit_per_query: int, published_after: str | None = None, published_before: str | None = None) -> dict:
+def _sync_with_opencli_search(
+    limit_per_query: int,
+    published_after: str | None,
+    published_before: str | None,
+    topic_id: int,
+    topic: dict,
+) -> dict:
     opencli = shutil.which(settings.opencli_path) or shutil.which("opencli")
     if not opencli:
         return {"mode": "opencli_youtube_search", "queried": 0, "candidates": 0, "inserted": 0, "message": "未找到 opencli 命令。"}
 
-    queries = _opencli_queries(published_after, published_before)
+    queries = _opencli_queries(topic, published_after, published_before)
     raw_items: list[dict] = []
     for query in queries:
         raw_items.extend(_run_opencli_youtube_search(opencli, query, max(limit_per_query, 5)))
@@ -302,7 +283,7 @@ def _sync_with_opencli_search(limit_per_query: int, published_after: str | None 
             metadata.setdefault("channel", item.get("channel", ""))
             enriched.append(metadata)
 
-    inserted = _upsert_ytdlp_items(enriched, published_after, published_before)
+    inserted = _upsert_ytdlp_items(enriched, published_after, published_before, topic_id, topic)
     return {
         "mode": "opencli_youtube_search",
         "queried": len(queries),
@@ -312,14 +293,10 @@ def _sync_with_opencli_search(limit_per_query: int, published_after: str | None 
     }
 
 
-def _opencli_queries(published_after: str | None, published_before: str | None) -> list[str]:
+def _opencli_queries(topic: dict, published_after: str | None, published_before: str | None) -> list[str]:
     start, before = _query_date_bounds(published_after, published_before)
     date_clause = f" after:{start} before:{before}" if start and before else ""
-    return [
-        f"AI interview{date_clause}",
-        f"artificial intelligence CEO interview{date_clause}",
-        f"OpenAI Anthropic DeepMind NVIDIA interview{date_clause}",
-    ]
+    return [f"{query}{date_clause}" for query in discovery_queries(topic, limit=8)]
 
 
 def _query_date_bounds(published_after: str | None, published_before: str | None) -> tuple[str, str]:
@@ -441,11 +418,17 @@ def _ytdlp_command() -> list[str]:
     return require_ytdlp_command()
 
 
-def _upsert_ytdlp_items(items: list[dict], published_after: str | None = None, published_before: str | None = None) -> int:
+def _upsert_ytdlp_items(
+    items: list[dict],
+    published_after: str | None = None,
+    published_before: str | None = None,
+    topic_id: int = 1,
+    topic: dict | None = None,
+) -> int:
     if not items:
         return 0
     with get_connection() as conn:
-        people = [dict(row) for row in conn.execute("SELECT * FROM people").fetchall()]
+        topic = topic or get_topic(topic_id)
         inserted_or_updated = 0
         for item in items:
             external_id = item.get("id") or item.get("url")
@@ -453,8 +436,6 @@ def _upsert_ytdlp_items(items: list[dict], published_after: str | None = None, p
                 continue
             title = item.get("title", "")
             description = item.get("description", "") or ""
-            if not looks_ai_related(title, description, item.get("channel") or item.get("uploader") or ""):
-                continue
             url = item.get("webpage_url") or item.get("url") or f"https://www.youtube.com/watch?v={external_id}"
             if external_id and "youtube.com" not in url and "youtu.be" not in url:
                 url = f"https://www.youtube.com/watch?v={external_id}"
@@ -463,21 +444,22 @@ def _upsert_ytdlp_items(items: list[dict], published_after: str | None = None, p
             published_at = _published_at_from_ytdlp(item)
             if not published_at or not _within_utc_window(published_at, published_after, published_before):
                 continue
-            matches, names, candidate_people, reason = people_signals_for_video(title, description, channel, people)
-            confidence = interview_confidence(title, description, duration)
+            matches, names, candidate_people, reason, confidence = topic_signals(title, description, channel, topic)
+            if confidence <= 0:
+                continue
             view_count = int(item.get("view_count") or 0)
-            score = priority_score(matches, confidence, published_at, channel, view_count)
-            summary = build_discovery_summary(title, description, channel, names or candidate_people)
+            score = topic_priority_score(matches, confidence, published_at, view_count, topic["ranking_mode"])
+            summary = build_discovery_summary(title, description, channel, names or candidate_people, topic["name"], topic["keywords"])
             timestamp = now_iso()
             cursor = conn.execute(
                 """
                 INSERT INTO videos (
-                  platform, external_id, url, title, description, channel_title, published_at,
+                  topic_id, platform, external_id, url, title, description, channel_title, published_at,
                   duration_seconds, view_count, like_count, thumbnail_url, matched_people,
                   candidate_people, people_match_reason, interview_confidence, priority_score, status, compliance_note, summary, source_tier, created_at, updated_at
                 )
-                VALUES ('youtube', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 'ready', 'metadata_only', ?, 'stable', ?, ?)
-                ON CONFLICT(platform, external_id) DO UPDATE SET
+                VALUES (?, 'youtube', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 'ready', 'metadata_only', ?, 'stable', ?, ?)
+                ON CONFLICT(topic_id, platform, external_id) DO UPDATE SET
                   title = excluded.title,
                   url = excluded.url,
                   channel_title = excluded.channel_title,
@@ -495,6 +477,7 @@ def _upsert_ytdlp_items(items: list[dict], published_after: str | None = None, p
                   updated_at = excluded.updated_at
                 """,
                 (
+                    topic_id,
                     str(external_id),
                     url,
                     title,

@@ -8,6 +8,7 @@ from app.config import settings
 from app.bilibili import sync_bilibili
 from app.db import get_connection, now_iso, row_to_dict
 from app.summaries import build_discovery_summary
+from app.topics import get_topic
 from app.youtube import sync_youtube
 
 
@@ -44,17 +45,24 @@ def _beijing_day_start_utc(target: date) -> str:
     return start_local.astimezone(timezone.utc).replace(microsecond=0).isoformat()
 
 
-async def run_daily_discovery(day: str | None = None, limit_per_query: int = 5, start_date: str | None = None, end_date: str | None = None) -> dict:
+async def run_daily_discovery(
+    day: str | None = None,
+    limit_per_query: int = 5,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    topic_id: int = 1,
+) -> dict:
     range_start, range_end, window_start, window_end = beijing_range_window(start_date or day, end_date or day)
+    topic = get_topic(topic_id)
     timestamp = now_iso()
     with get_connection() as conn:
         cursor = conn.execute(
             """
             INSERT INTO jobs (type, status, message, payload, created_at, updated_at)
-            VALUES ('daily_discovery', 'running', '正在抓取区间 AI 采访', ?, ?, ?)
+            VALUES ('daily_discovery', 'running', '正在抓取当前主题素材', ?, ?, ?)
             """,
             (
-                json.dumps({"start_date": range_start, "end_date": range_end, "window_start": window_start, "window_end": window_end}, ensure_ascii=False),
+                json.dumps({"topic_id": topic_id, "start_date": range_start, "end_date": range_end, "window_start": window_start, "window_end": window_end}, ensure_ascii=False),
                 timestamp,
                 timestamp,
             ),
@@ -64,25 +72,29 @@ async def run_daily_discovery(day: str | None = None, limit_per_query: int = 5, 
     source_results: dict[str, dict] = {}
     failures: dict[str, str] = {}
 
-    try:
-        source_results["youtube"] = await sync_youtube(
-            days_back=1,
-            limit_per_query=limit_per_query,
-            include_demo_when_unconfigured=False,
-            published_after=window_start,
-            published_before=window_end,
-        )
-    except Exception as exc:
-        failures["youtube"] = str(exc)
+    if "youtube" in topic["sources"]:
+        try:
+            source_results["youtube"] = await sync_youtube(
+                days_back=1,
+                limit_per_query=limit_per_query,
+                include_demo_when_unconfigured=False,
+                published_after=window_start,
+                published_before=window_end,
+                topic_id=topic_id,
+            )
+        except Exception as exc:
+            failures["youtube"] = str(exc)
 
-    try:
-        source_results["bilibili"] = sync_bilibili(
-            limit_per_query=limit_per_query,
-            published_after=window_start,
-            published_before=window_end,
-        )
-    except Exception as exc:
-        failures["bilibili"] = str(exc)
+    if "bilibili" in topic["sources"]:
+        try:
+            source_results["bilibili"] = sync_bilibili(
+                limit_per_query=limit_per_query,
+                published_after=window_start,
+                published_before=window_end,
+                topic_id=topic_id,
+            )
+        except Exception as exc:
+            failures["bilibili"] = str(exc)
 
     result = {"sources": source_results, "failures": failures}
     status = "failed" if failures and not source_results else "completed"
@@ -100,45 +112,50 @@ async def run_daily_discovery(day: str | None = None, limit_per_query: int = 5, 
             (
                 status,
                 message,
-                json.dumps({"start_date": range_start, "end_date": range_end, "result": result}, ensure_ascii=False),
+                json.dumps({"topic_id": topic_id, "start_date": range_start, "end_date": range_end, "result": result}, ensure_ascii=False),
                 now_iso(),
                 job_id,
             ),
         )
 
-    daily = get_daily_report(range_start, range_end)
+    daily = get_daily_report(range_start, range_end, topic_id)
     daily["job_id"] = job_id
     daily["run_result"] = result
     return daily
 
 
-def get_daily_report(day: str | None = None, end_date: str | None = None) -> dict:
+def get_daily_report(day: str | None = None, end_date: str | None = None, topic_id: int = 1) -> dict:
     range_start, range_end, window_start, window_end = beijing_range_window(day, end_date or day)
+    topic = get_topic(topic_id)
     with get_connection() as conn:
         rows = [
             row_to_dict(row)
             for row in conn.execute(
                 """
                 SELECT * FROM videos
+                WHERE topic_id = ?
                 ORDER BY priority_score DESC, published_at DESC, created_at DESC, id DESC
-                """
+                """,
+                (topic_id,),
             ).fetchall()
         ]
-        latest_job = conn.execute("SELECT * FROM jobs WHERE type IN ('daily_discovery', 'download_translate') ORDER BY id DESC LIMIT 1").fetchone()
+        latest_jobs = conn.execute("SELECT * FROM jobs WHERE type IN ('daily_discovery', 'download_translate') ORDER BY id DESC LIMIT 100").fetchall()
+        latest_job = next((row for row in latest_jobs if _job_matches_topic(row, topic_id)), None)
     items = [
-        _with_decision_summary(row)
+        _with_decision_summary(row, topic)
         for row in rows
-        if _row_matches_beijing_range(row, range_start, range_end) and _is_real_video_row(row)
+        if _row_matches_beijing_range(row, range_start, range_end) and _is_real_video_row(row) and _is_visible_for_topic(row)
     ]
     return {
         "date": range_start,
         "start_date": range_start,
         "end_date": range_end,
+        "topic": topic,
         "timezone": "Asia/Shanghai",
         "window_start": window_start,
         "window_end": window_end,
         "items": items,
-        "source_runs": _source_runs(),
+        "source_runs": _source_runs(topic),
         "latest_job": row_to_dict(latest_job) if latest_job else None,
     }
 
@@ -162,13 +179,21 @@ def _is_real_video_row(row: dict) -> bool:
     return bool(url)
 
 
-def _with_decision_summary(row: dict) -> dict:
+def _is_visible_for_topic(row: dict) -> bool:
+    if float(row.get("interview_confidence") or 0) > 0:
+        return True
+    return row.get("status") in {"imported", "translated", "clipped", "exported", "clip_ready", "downloading", "transcribing", "translating"}
+
+
+def _with_decision_summary(row: dict, topic: dict) -> dict:
     item = dict(row)
     item["summary"] = build_discovery_summary(
         item.get("title", ""),
         item.get("description", ""),
         item.get("channel_title", ""),
         item.get("matched_people", "") or item.get("candidate_people", ""),
+        topic["name"],
+        topic["keywords"],
     )
     return item
 
@@ -185,7 +210,7 @@ def _parse_datetime(value: str) -> datetime | None:
     return parsed
 
 
-def _source_runs() -> list[dict]:
+def _source_runs(topic: dict) -> list[dict]:
     if settings.youtube_api_key:
         youtube_status = "ready"
         youtube_message = "使用 YouTube Data API 按发布日期区间抓取，返回具体视频链接。"
@@ -195,10 +220,16 @@ def _source_runs() -> list[dict]:
     else:
         youtube_status = "local_ytdlp"
         youtube_message = "未配置 YouTube API：本机 yt-dlp 只能补充发现，按真实上传日期过滤，可能不全面。"
+    youtube = {"name": "YouTube", "tier": "stable", "status": youtube_status, "message": youtube_message}
+    if "youtube" not in topic["sources"]:
+        youtube = {"name": "YouTube", "tier": "stable", "status": "disabled", "message": "当前主题未启用 YouTube。"}
+    bilibili = _bilibili_source_run()
+    if "bilibili" not in topic["sources"]:
+        bilibili = {"name": "B站", "tier": "stable", "status": "disabled", "message": "当前主题未启用 B站。"}
     return [
-        {"name": "YouTube", "tier": "stable", "status": youtube_status, "message": youtube_message},
+        youtube,
         {"name": "Podcast RSS", "tier": "stable", "status": "planned", "message": "待接入节目 RSS；当前不参与自动抓取，避免误报。"},
-        _bilibili_source_run(),
+        bilibili,
         {"name": "X / LinkedIn", "tier": "experimental", "status": "manual", "message": "官方 API 有收费或权限限制，首版不做自动全网抓取。"},
     ]
 
@@ -212,3 +243,11 @@ def _bilibili_source_run() -> dict:
             "message": "使用 opencli 抓关键词和重点 UP 投稿，再用 B站元数据按发布时间过滤。",
         }
     return {"name": "B站", "tier": "stable", "status": "disabled", "message": "B站抓取未启用或未找到 opencli。"}
+
+
+def _job_matches_topic(row: object, topic_id: int) -> bool:
+    try:
+        payload = json.loads(row["payload"] or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return int(payload.get("topic_id") or 1) == topic_id

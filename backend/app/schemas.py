@@ -5,6 +5,30 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class TopicCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    description: str = Field(default="", max_length=500)
+    keywords: list[str] = Field(min_length=1, max_length=20)
+    excluded_keywords: list[str] = Field(default_factory=list, max_length=20)
+    focus_people: list[str] = Field(default_factory=list, max_length=30)
+    channel_terms: list[str] = Field(default_factory=list, max_length=30)
+    bilibili_channel_uids: list[str] = Field(default_factory=list, max_length=30)
+    sources: list[Literal["youtube", "bilibili"]] = Field(default_factory=lambda: ["youtube", "bilibili"], min_length=1)
+    ranking_mode: Literal["balanced", "people", "popular", "latest"] = "balanced"
+
+
+class TopicUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    description: str | None = Field(default=None, max_length=500)
+    keywords: list[str] | None = Field(default=None, min_length=1, max_length=20)
+    excluded_keywords: list[str] | None = Field(default=None, max_length=20)
+    focus_people: list[str] | None = Field(default=None, max_length=30)
+    channel_terms: list[str] | None = Field(default=None, max_length=30)
+    bilibili_channel_uids: list[str] | None = Field(default=None, max_length=30)
+    sources: list[Literal["youtube", "bilibili"]] | None = Field(default=None, min_length=1)
+    ranking_mode: Literal["balanced", "people", "popular", "latest"] | None = None
+
+
 class PersonCreate(BaseModel):
     name: str
     english_name: str = ""
@@ -41,12 +65,14 @@ class ClipMarkReorder(BaseModel):
 
 
 class YoutubeSyncRequest(BaseModel):
+    topic_id: int = Field(default=1, gt=0)
     days_back: int = Field(default=1, ge=1, le=30)
     limit_per_query: int = Field(default=8, ge=1, le=25)
     include_demo_when_unconfigured: bool = True
 
 
 class DailyRunRequest(BaseModel):
+    topic_id: int = Field(default=1, gt=0)
     date: str | None = None
     start_date: str | None = None
     end_date: str | None = None

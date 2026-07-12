@@ -40,7 +40,29 @@ export interface Job {
   video_id?: number | null;
   video_title?: string;
   video_url?: string;
+  topic_id?: number;
 }
+
+export type TopicRankingMode = "balanced" | "people" | "popular" | "latest";
+
+export interface Topic {
+  id: number;
+  name: string;
+  description: string;
+  keywords: string[];
+  excluded_keywords: string[];
+  focus_people: string[];
+  channel_terms: string[];
+  bilibili_channel_uids: string[];
+  sources: Array<"youtube" | "bilibili">;
+  ranking_mode: TopicRankingMode;
+  video_count: number;
+  clip_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type TopicInput = Omit<Topic, "id" | "video_count" | "clip_count" | "created_at" | "updated_at">;
 
 export interface SourceRun {
   name: string;
@@ -53,6 +75,7 @@ export interface DailyReport {
   date: string;
   start_date: string;
   end_date: string;
+  topic: Topic;
   timezone: string;
   window_start: string;
   window_end: string;
@@ -76,6 +99,7 @@ export interface Person {
 
 export interface Video {
   id: number;
+  topic_id: number;
   platform: string;
   external_id: string;
   url: string;

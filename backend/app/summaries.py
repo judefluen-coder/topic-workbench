@@ -60,20 +60,28 @@ NOISE_PREFIXES = (
 )
 
 
-def build_discovery_summary(title: str, description: str, channel: str, matched_people: str) -> str:
+def build_discovery_summary(
+    title: str,
+    description: str,
+    channel: str,
+    matched_people: str,
+    topic_name: str = "",
+    topic_keywords: list[str] | None = None,
+) -> str:
     lead = _lead_sentence(title, description)
     topics = _extract_topics(title, description)
     outline = _extract_outline_items(description)
     people = _validated_people(matched_people, title, description) or _infer_person_hint(title, description)
     source = channel or "未知来源"
-    topic_text = "、".join(topics[:3]) if topics else "AI/科技趋势"
+    configured_topics = [value.strip() for value in (topic_keywords or []) if value.strip()]
+    topic_text = "、".join(topics[:3] or configured_topics[:3]) or topic_name or "当前主题"
     main = f"值得看：{people}｜{source}｜聚焦 {topic_text}。{lead[:150]}"
     if outline:
         detail = f"可剪辑点：{'；'.join(outline[:3])}"
     elif topics:
         detail = f"可剪辑点：围绕 {topic_text} 做观点短切，适合先看原片确认嘉宾原话。"
     else:
-        detail = "可剪辑点：标题和描述命中 AI 采访候选，建议先确认嘉宾身份和核心观点。"
+        detail = f"可剪辑点：标题和描述命中“{topic_name or '当前主题'}”，建议先确认素材内容和核心观点。"
     return f"{main} {detail}"
 
 

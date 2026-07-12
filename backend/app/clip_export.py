@@ -275,8 +275,8 @@ def render_clip_marks(
 def default_save_dir(destination: str = "downloads") -> Path:
     home = Path.home()
     if destination == "desktop":
-        return home / "Desktop" / "Tech PR Clips"
-    return home / "Downloads" / "Tech PR Clips"
+        return home / "Desktop" / "Topic Workbench Clips"
+    return home / "Downloads" / "Topic Workbench Clips"
 
 
 def _copy_sequence_to_destination(sequence_path: Path, video_id: int, title: str, destination: str, output_dir: Path | str, filename: str) -> Path:

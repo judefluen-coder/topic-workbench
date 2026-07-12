@@ -1,11 +1,11 @@
 {
-  "name": "tech-pr-workbench-root",
+  "name": "topic-workbench-root",
   "private": true,
   "scripts": {
     "setup": "node scripts/dev.mjs --install-only",
     "doctor": "node scripts/dev.mjs --check-only",
     "dev": "node scripts/dev.mjs",
-    "backend": "uv run --project backend uvicorn --app-dir backend app.main:app --reload --host 127.0.0.1 --port 8000",
+    "backend": "uv run --project backend uvicorn --app-dir backend app.main:app --reload --reload-dir backend/app --host 127.0.0.1 --port 8000",
     "worker": "uv --directory backend run python -m app.worker",
     "frontend": "npm run dev --prefix frontend",
     "docker:up": "docker compose up --build",

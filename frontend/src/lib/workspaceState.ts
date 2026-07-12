@@ -3,6 +3,7 @@ import type { ClipRenderOptions } from "../types";
 export type WorkspaceView = "discovery" | "tasks" | "editor";
 
 export interface WorkspaceState {
+  topicId: number | null;
   startDate: string;
   endDate: string;
   selectedVideoId: number | null;
@@ -27,13 +28,14 @@ interface StorageLike {
   setItem(key: string, value: string): void;
 }
 
-const WORKSPACE_KEY = "tech-pr-workbench:workspace:v1";
+const WORKSPACE_KEY = "topic-workbench:workspace:v1";
 
 export function loadWorkspaceState(storage: StorageLike | null = browserStorage()): WorkspaceState | null {
   const value = readJson(storage, WORKSPACE_KEY);
   if (!value || !isDate(value.startDate) || !isDate(value.endDate) || !isWorkspaceView(value.view)) return null;
   const selectedVideoId = positiveInteger(value.selectedVideoId);
   return {
+    topicId: positiveInteger(value.topicId),
     startDate: value.startDate,
     endDate: value.endDate,
     selectedVideoId,
@@ -95,7 +97,7 @@ function browserStorage(): StorageLike | null {
 }
 
 function editorKey(videoId: number): string {
-  return `tech-pr-workbench:editor:v1:${videoId}`;
+  return `topic-workbench:editor:v1:${videoId}`;
 }
 
 function readJson(storage: StorageLike | null, key: string): Record<string, any> | null {

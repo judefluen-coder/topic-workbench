@@ -40,7 +40,7 @@ import { formatDate, formatDuration, formatNumber, formatTimecode, statusLabel }
 import { buildJobState, isActiveJobStatus, jobResult, jobVideoId } from "./lib/jobState";
 import { buildTranscriptWindow } from "./lib/transcriptWindow";
 import { loadClipEditorState, loadWorkspaceState, saveClipEditorState, saveWorkspaceState, type WorkspaceView } from "./lib/workspaceState";
-import type { ClipMark, ClipPayload, ClipRenderOptions, ClipRenderResult, DailyReport, Job, MediaAsset, SourceRun, Transcript, Video } from "./types";
+import type { ClipMark, ClipPayload, ClipRenderOptions, ClipRenderResult, DailyReport, Job, MediaAsset, SourceRun, Topic, TopicInput, Transcript, Video } from "./types";
 
 const VIDEO_PROCESSING_STATUSES = new Set(["downloading", "subtitle_fetching", "transcribing", "translating"]);
 const EXPORT_VERSION_PRESETS = [
@@ -160,6 +160,9 @@ function App() {
   const dailyRequestIdRef = useRef(0);
   const [startDate, setStartDate] = useState(restoredWorkspace?.startDate ?? defaultRange.start);
   const [endDate, setEndDate] = useState(restoredWorkspace?.endDate ?? defaultRange.end);
+  const [topics, setTopics] = useState<Topic[]>([]);
+  const [activeTopicId, setActiveTopicId] = useState(restoredWorkspace?.topicId ?? 1);
+  const [topicEditor, setTopicEditor] = useState<"create" | "edit" | null>(null);
   const [report, setReport] = useState<DailyReport | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(restoredWorkspace?.selectedVideoId ?? null);
   const [activeView, setActiveView] = useState<WorkspaceView>(restoredWorkspace?.view ?? "discovery");
@@ -176,7 +179,7 @@ function App() {
     const requestId = ++dailyRequestIdRef.current;
     setLoading(true);
     try {
-      const next = await api.daily({ start_date: range.start, end_date: range.end });
+      const next = await api.daily({ topic_id: activeTopicId, start_date: range.start, end_date: range.end });
       if (requestId !== dailyRequestIdRef.current) return;
       setReport(next);
       const selectedStillVisible = next.items.some((item) => item.id === selectedId);
@@ -191,11 +194,18 @@ function App() {
 
   useEffect(() => {
     loadDaily({ start: startDate, end: endDate });
-  }, [startDate, endDate]);
+  }, [activeTopicId, startDate, endDate]);
 
   useEffect(() => {
-    saveWorkspaceState({ startDate, endDate, selectedVideoId: selectedId, view: activeView });
-  }, [activeView, endDate, selectedId, startDate]);
+    api.topics().then((records) => {
+      setTopics(records);
+      if (records.length && !records.some((topic) => topic.id === activeTopicId)) setActiveTopicId(records[0].id);
+    }).catch((error) => setToast(readError(error, "主题加载失败")));
+  }, []);
+
+  useEffect(() => {
+    saveWorkspaceState({ topicId: activeTopicId, startDate, endDate, selectedVideoId: selectedId, view: activeView });
+  }, [activeTopicId, activeView, endDate, selectedId, startDate]);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -208,7 +218,10 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
-    api.jobs().then((records) => {
+    setJobs({});
+    setJobIdsByVideo({});
+    setLatestJobIdsByVideo({});
+    api.jobs(activeTopicId).then((records) => {
       if (cancelled) return;
       const state = buildJobState(records);
       setJobs(state.jobs);
@@ -218,7 +231,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activeTopicId]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -295,10 +308,10 @@ function App() {
     }
     setRunningDaily(true);
     try {
-      const next = await api.runDaily({ start_date: startDate, end_date: endDate, limit_per_query: 3 });
+      const next = await api.runDaily({ topic_id: activeTopicId, start_date: startDate, end_date: endDate, limit_per_query: 3 });
       dailyRequestIdRef.current += 1;
       setReport(next);
-      setToast("区间 AI 采访抓取完成。");
+      setToast("当前主题素材抓取完成。");
       if (next.items[0]) setSelectedId(next.items[0].id);
     } catch (error) {
       setToast(readError(error, "抓取失败"));
@@ -350,6 +363,27 @@ function App() {
   const selectedJob = latestJobId ? jobs[latestJobId] ?? null : null;
   const selectedProcessing = Boolean(activeJobId) || Boolean(selectedVideo && VIDEO_PROCESSING_STATUSES.has(selectedVideo.status));
   const activeJobsCount = Object.keys(jobIdsByVideo).length;
+  const activeTopic = topics.find((topic) => topic.id === activeTopicId) ?? report?.topic ?? null;
+
+  const selectTopic = (topicId: number) => {
+    setActiveTopicId(topicId);
+    setSelectedId(null);
+    setClip(null);
+    setReport(null);
+    setActiveView("discovery");
+  };
+
+  const saveTopic = async (payload: TopicInput) => {
+    try {
+      const saved = topicEditor === "edit" && activeTopic ? await api.updateTopic(activeTopic.id, payload) : await api.createTopic(payload);
+      setTopics((current) => topicEditor === "edit" ? current.map((topic) => topic.id === saved.id ? saved : topic) : [saved, ...current]);
+      setTopicEditor(null);
+      selectTopic(saved.id);
+      setToast(topicEditor === "edit" ? "主题配置已更新。" : "新主题已创建。现在可以选择日期开始抓取。");
+    } catch (error) {
+      setToast(readError(error, "主题保存失败"));
+    }
+  };
 
   const selectVideo = (id: number, view?: WorkspaceView) => {
     setSelectedId(id);
@@ -364,14 +398,14 @@ function App() {
             <GlobeHemisphereEast size={24} weight="duotone" />
           </div>
           <div>
-            <h1>Tech PR Workbench</h1>
-            <p>本地采访发现、字幕处理与粗剪工作室</p>
+            <h1>Topic Workbench</h1>
+            <p>本地多主题素材发现、字幕处理与粗剪工作室</p>
           </div>
         </div>
         <nav className="workspace-tabs" role="tablist" aria-label="工作视图">
           <button className={activeView === "discovery" ? "active" : ""} role="tab" aria-selected={activeView === "discovery"} onClick={() => setActiveView("discovery")}>
             <GlobeHemisphereEast size={16} />
-            采访发现
+            主题素材
           </button>
           <button className={activeView === "tasks" ? "active" : ""} role="tab" aria-selected={activeView === "tasks"} onClick={() => setActiveView("tasks")}>
             <Clock size={16} />
@@ -385,13 +419,43 @@ function App() {
         </nav>
       </header>
 
+      <section className="topic-switcher" aria-label="当前主题">
+        <div className="topic-switcher-main">
+          <span>当前主题</span>
+          <select value={activeTopicId} onChange={(event) => selectTopic(Number(event.target.value))}>
+            {topics.map((topic) => <option key={topic.id} value={topic.id}>{topic.name}</option>)}
+          </select>
+          <p>{activeTopic?.description || "用关键词、重点人物和频道线索定义需要抓取的内容。"}</p>
+        </div>
+        <div className="topic-switcher-meta">
+          <span>{activeTopic?.keywords.length || 0} 个关键词</span>
+          <span>{activeTopic?.sources.map(platformLabel).join(" + ") || "未配置来源"}</span>
+          <button type="button" title="编辑当前主题" onClick={() => setTopicEditor("edit")} disabled={!activeTopic}>
+            <PencilSimple size={16} />
+            编辑
+          </button>
+          <button className="primary" type="button" onClick={() => setTopicEditor("create")}>
+            <PlusCircle size={16} />
+            新建主题
+          </button>
+        </div>
+      </section>
+
+      {topicEditor && (
+        <TopicEditor
+          topic={topicEditor === "edit" ? activeTopic : null}
+          onClose={() => setTopicEditor(null)}
+          onSave={saveTopic}
+        />
+      )}
+
       {isDemoMode && (
         <section className="demo-mode-bar" aria-label="GitHub Pages 体验版">
           <div>
             <strong>GitHub Pages 体验版</strong>
             <span>当前使用样例数据；抓取、下载与 MP4 导出仅作流程模拟，不会连接平台或上传文件。</span>
           </div>
-          <a href="https://github.com/judefluen-coder/tech-pr-workbench" target="_blank" rel="noreferrer">
+          <a href="https://github.com/judefluen-coder/topic-workbench" target="_blank" rel="noreferrer">
             <ArrowSquareOut size={15} />
             本地完整版
           </a>
@@ -399,7 +463,7 @@ function App() {
       )}
 
       {activeView === "discovery" && (
-        <div className="view-panel" role="tabpanel" aria-label="采访发现">
+        <div className="view-panel" role="tabpanel" aria-label="主题素材">
           <section className="view-command-bar">
             <div className="date-range-actions">
               <label className="date-control">
@@ -415,12 +479,12 @@ function App() {
             </div>
             <button className="primary" onClick={runDaily} disabled={runningDaily}>
               {runningDaily ? <SpinnerGap size={17} className="spin" /> : <DownloadSimple size={17} />}
-              {runningDaily ? "抓取中" : "抓取区间 AI 采访"}
+              {runningDaily ? "抓取中" : "抓取当前主题"}
             </button>
           </section>
 
           <section className="summary-strip">
-            <Metric label="候选采访" value={stats.total} detail="按北京时间区间" />
+            <Metric label="候选素材" value={stats.total} detail="按北京时间区间" />
             <Metric label="可处理" value={stats.ready} detail="可下载翻译" />
             <Metric label="处理中" value={stats.processing} detail="下载/字幕/转写" />
             <Metric label="可剪辑" value={stats.clipReady} detail="已带中文字幕" />
@@ -436,12 +500,12 @@ function App() {
             <div className="daily-panel">
               <div className="panel-toolbar">
                 <div>
-                  <h2>{startDate === endDate ? startDate : `${startDate} 至 ${endDate}`} AI 采访列表</h2>
+                  <h2>{activeTopic?.name || "当前主题"} · {startDate === endDate ? startDate : `${startDate} 至 ${endDate}`}</h2>
                   <p>{report ? `北京时间窗口：${formatDate(report.window_start)} - ${formatDate(report.window_end)}` : "正在准备日报"}</p>
                 </div>
                 <label className="search-control">
                   <MagnifyingGlass size={17} />
-                  <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜人物、标题、频道" />
+                  <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜标题、频道或重点对象" />
                 </label>
               </div>
               {loading ? (
@@ -497,6 +561,119 @@ function App() {
         </button>
       )}
     </main>
+  );
+}
+
+function TopicEditor({ topic, onClose, onSave }: { topic: Topic | null; onClose: () => void; onSave: (payload: TopicInput) => void | Promise<void> }) {
+  const [name, setName] = useState(topic?.name ?? "");
+  const [description, setDescription] = useState(topic?.description ?? "");
+  const [keywords, setKeywords] = useState(joinTerms(topic?.keywords));
+  const [excludedKeywords, setExcludedKeywords] = useState(joinTerms(topic?.excluded_keywords));
+  const [focusPeople, setFocusPeople] = useState(joinTerms(topic?.focus_people));
+  const [channelTerms, setChannelTerms] = useState(joinTerms(topic?.channel_terms));
+  const [bilibiliUids, setBilibiliUids] = useState(joinTerms(topic?.bilibili_channel_uids));
+  const [sources, setSources] = useState<Array<"youtube" | "bilibili">>(topic?.sources ?? ["youtube", "bilibili"]);
+  const [rankingMode, setRankingMode] = useState<TopicInput["ranking_mode"]>(topic?.ranking_mode ?? "balanced");
+  const [saving, setSaving] = useState(false);
+
+  const toggleSource = (source: "youtube" | "bilibili") => {
+    setSources((current) => current.includes(source) ? current.filter((item) => item !== source) : [...current, source]);
+  };
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const parsedKeywords = splitTerms(keywords);
+    if (!name.trim() || !parsedKeywords.length || !sources.length) return;
+    setSaving(true);
+    try {
+      await onSave({
+        name: name.trim(),
+        description: description.trim(),
+        keywords: parsedKeywords,
+        excluded_keywords: splitTerms(excludedKeywords),
+        focus_people: splitTerms(focusPeople),
+        channel_terms: splitTerms(channelTerms),
+        bilibili_channel_uids: splitTerms(bilibiliUids),
+        sources,
+        ranking_mode: rankingMode,
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <form className="topic-editor-modal" aria-label={topic ? "编辑主题" : "新建主题"} onSubmit={submit}>
+        <header>
+          <div>
+            <span>主题配置</span>
+            <h2>{topic ? "编辑当前主题" : "新建抓取主题"}</h2>
+          </div>
+          <button className="icon-button" type="button" title="关闭" onClick={onClose}><X size={18} /></button>
+        </header>
+
+        <div className="topic-editor-grid">
+          <label className="topic-field full">
+            <span>主题名称</span>
+            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：新能源汽车出海" required />
+          </label>
+          <label className="topic-field full">
+            <span>主题说明</span>
+            <input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个主题需要持续关注什么" />
+          </label>
+          <label className="topic-field">
+            <span>关键词 *</span>
+            <textarea value={keywords} onChange={(event) => setKeywords(event.target.value)} placeholder={"新能源汽车 出海\nEV global expansion"} required />
+            <small>每行一个，也可以用逗号分隔。</small>
+          </label>
+          <label className="topic-field">
+            <span>排除词</span>
+            <textarea value={excludedKeywords} onChange={(event) => setExcludedKeywords(event.target.value)} placeholder={"招聘\n广告\nshorts"} />
+            <small>命中后不会进入素材列表。</small>
+          </label>
+          <label className="topic-field">
+            <span>重点人物</span>
+            <textarea value={focusPeople} onChange={(event) => setFocusPeople(event.target.value)} placeholder={"人物中文名\nEnglish Name"} />
+            <small>用于增强搜索和“人物优先”排序。</small>
+          </label>
+          <label className="topic-field">
+            <span>频道线索</span>
+            <textarea value={channelTerms} onChange={(event) => setChannelTerms(event.target.value)} placeholder={"频道名\n机构名\n品牌名"} />
+            <small>既可作为搜索词，也会增强频道匹配。</small>
+          </label>
+          <label className="topic-field full">
+            <span>B站重点 UP 主 UID</span>
+            <input value={bilibiliUids} onChange={(event) => setBilibiliUids(event.target.value)} placeholder="多个 UID 用逗号分隔" />
+          </label>
+        </div>
+
+        <fieldset className="topic-options">
+          <legend>抓取来源</legend>
+          <label><input type="checkbox" checked={sources.includes("youtube")} onChange={() => toggleSource("youtube")} /> YouTube</label>
+          <label><input type="checkbox" checked={sources.includes("bilibili")} onChange={() => toggleSource("bilibili")} /> B站</label>
+        </fieldset>
+
+        <label className="topic-field full">
+          <span>排序方式</span>
+          <select value={rankingMode} onChange={(event) => setRankingMode(event.target.value as TopicInput["ranking_mode"])}>
+            <option value="balanced">综合排序</option>
+            <option value="people">人物优先</option>
+            <option value="popular">热度优先</option>
+            <option value="latest">最新优先</option>
+          </select>
+        </label>
+
+        <footer>
+          <span>{!sources.length ? "至少选择一个抓取来源" : !splitTerms(keywords).length ? "至少填写一个关键词" : "保存后即可按当前配置抓取"}</span>
+          <button type="button" onClick={onClose}>取消</button>
+          <button className="primary" type="submit" disabled={saving || !name.trim() || !splitTerms(keywords).length || !sources.length}>
+            {saving ? <SpinnerGap className="spin" size={16} /> : <FloppyDisk size={16} />}
+            {saving ? "保存中" : "保存主题"}
+          </button>
+        </footer>
+      </form>
+    </div>
   );
 }
 
@@ -576,7 +753,7 @@ function TaskCenter({
           <div className="status-empty task-list-empty">
             <Clock size={22} />
             <h2>还没有处理任务</h2>
-            <p>从“采访发现”进入剪辑工作台后，素材准备进度、失败原因和重试操作会集中显示在这里。</p>
+            <p>从“主题素材”进入剪辑工作台后，素材准备进度、失败原因和重试操作会集中显示在这里。</p>
           </div>
         )}
       </div>
@@ -662,7 +839,7 @@ function TaskStatus({
       <div className="status-empty">
         <Clock size={22} />
         <h2>等待选择视频</h2>
-        <p>选择任意采访后，这里会显示下载翻译状态和下一步动作。</p>
+        <p>选择任意素材后，这里会显示下载、字幕处理状态和下一步动作。</p>
       </div>
     );
   }
@@ -740,20 +917,20 @@ function PeopleSignal({ video }: { video: Video }) {
   if (tracked) {
     return (
       <span className="person-chip tracked" title={reason}>
-        追踪：{tracked}
+        重点：{tracked}
       </span>
     );
   }
   if (candidate) {
     return (
       <span className="person-chip inferred" title={reason}>
-        识别：{candidate}
+        识别对象：{candidate}
       </span>
     );
   }
   return (
     <span className="person-chip unknown" title={reason}>
-      人物待确认
+      对象待确认
     </span>
   );
 }
@@ -961,7 +1138,7 @@ function ClipWorkspace({
         <div className="status-empty">
           <Scissors size={24} />
           <h2>还没有选择剪辑视频</h2>
-          <p>从上方采访列表点击任意一条，或点击列表右侧“剪辑”按钮，这里会显示当前要处理的视频。</p>
+          <p>从上方素材列表点击任意一条，或点击列表右侧“剪辑”按钮，这里会显示当前要处理的视频。</p>
         </div>
       </section>
     );
@@ -2001,7 +2178,7 @@ function ClipWorkspace({
                 <>
                   <Thumbnail className="demo-video-thumb" url={video.thumbnail_url} />
                   <strong>体验版样例时间线</strong>
-                  <span>Pages 不加载或上传真实采访视频；字幕、选区、序列和导出设置仍可完整操作。</span>
+                  <span>Pages 不加载或上传真实视频；字幕、选区、序列和导出设置仍可完整操作。</span>
                 </>
               ) : (
                 <>
@@ -2282,7 +2459,7 @@ function ClipWorkspace({
                 onClick={() => setExportOptions({ ...exportOptions, destination: "downloads" })}
               >
                 下载文件夹
-                <span>~/Downloads/Tech PR Clips</span>
+                <span>~/Downloads/Topic Workbench Clips</span>
               </button>
               <button
                 className={`export-save-choice ${exportOptions.destination === "desktop" ? "active" : ""}`}
@@ -2290,7 +2467,7 @@ function ClipWorkspace({
                 onClick={() => setExportOptions({ ...exportOptions, destination: "desktop" })}
               >
                 桌面
-                <span>~/Desktop/Tech PR Clips</span>
+                <span>~/Desktop/Topic Workbench Clips</span>
               </button>
               <button
                 className={`export-save-choice ${exportOptions.destination === "custom" ? "active" : ""}`}
@@ -4317,11 +4494,11 @@ function EmptyState({ onRun, running }: { onRun: () => void; running: boolean })
   return (
     <div className="empty-state">
       <FilmSlate size={36} />
-      <h2>还没有这个区间的真实采访候选</h2>
-      <p>点击抓取后，系统会按人物名单、AI 采访关键词和重点 B站账号搜索，并按真实发布时间过滤。</p>
+      <h2>还没有这个区间的主题素材</h2>
+      <p>点击抓取后，系统会按当前主题的关键词、重点人物、频道线索和排除词搜索，并按真实发布时间过滤。</p>
       <button className="primary" onClick={onRun} disabled={running}>
         {running ? <SpinnerGap size={17} className="spin" /> : <DownloadSimple size={17} />}
-        {running ? "抓取中" : "抓取区间 AI 采访"}
+        {running ? "抓取中" : "抓取当前主题"}
       </button>
     </div>
   );
@@ -4424,7 +4601,7 @@ function defaultClipEditorState(title: string) {
 
 function jobTypeLabel(type: string): string {
   return {
-    daily_discovery: "采访抓取",
+    daily_discovery: "主题抓取",
     download_translate: "下载与翻译",
     render_clips: "序列导出",
     sync_bilibili: "B站同步",
@@ -4707,7 +4884,7 @@ function buildHighlightSuggestions(rows: TranscriptRow[], duration: number): Hig
       start,
       end,
       label: highlightLabel(item.text),
-      reason: "系统根据字幕中的观点词、AI 议题和可传播表达自动推荐。",
+      reason: "系统根据字幕中的观点词、论证表达和可传播性自动推荐。",
       quote: trimText(item.text, 120),
       score: item.score,
     });
@@ -4782,6 +4959,14 @@ function highlightLabel(text: string): string {
 function trimText(value: string, max: number): string {
   const compact = value.replace(/\s+/g, " ").trim();
   return compact.length > max ? `${compact.slice(0, max)}...` : compact;
+}
+
+function splitTerms(value: string): string[] {
+  return Array.from(new Set(value.split(/[\n,，;；]+/).map((item) => item.trim()).filter(Boolean)));
+}
+
+function joinTerms(values: string[] | undefined): string {
+  return (values ?? []).join("\n");
 }
 
 function toSecondInput(seconds: number): string {

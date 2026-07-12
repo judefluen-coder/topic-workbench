@@ -42,7 +42,7 @@ def get_job(job_id: int) -> dict:
     return _with_video_context([row_to_dict(row)])[0]
 
 
-def list_jobs(video_id: int | None = None, limit: int = 100) -> list[dict]:
+def list_jobs(video_id: int | None = None, limit: int = 100, topic_id: int | None = None) -> list[dict]:
     with get_connection() as conn:
         query = "SELECT * FROM jobs ORDER BY id DESC" if video_id is not None else "SELECT * FROM jobs ORDER BY id DESC LIMIT ?"
         params = () if video_id is not None else (max(limit, 1),)
@@ -51,7 +51,10 @@ def list_jobs(video_id: int | None = None, limit: int = 100) -> list[dict]:
             for row in conn.execute(query, params).fetchall()
         ]
     if video_id is None:
-        return _with_video_context(rows)
+        enriched = _with_video_context(rows)
+        if topic_id is not None:
+            enriched = [row for row in enriched if int(row.get("topic_id") or 1) == topic_id]
+        return enriched[: max(limit, 1)]
     filtered = [row for row in rows if job_payload(row).get("video_id") == video_id][: max(limit, 1)]
     return _with_video_context(filtered)
 
@@ -163,7 +166,7 @@ def _with_video_context(jobs: list[dict]) -> list[dict]:
             videos = {
                 row["id"]: row_to_dict(row)
                 for row in conn.execute(
-                    f"SELECT id, title, url FROM videos WHERE id IN ({placeholders})",
+                    f"SELECT id, topic_id, title, url FROM videos WHERE id IN ({placeholders})",
                     video_ids,
                 ).fetchall()
             }
@@ -179,5 +182,6 @@ def _with_video_context(jobs: list[dict]) -> list[dict]:
         video = videos.get(normalized_video_id) if normalized_video_id else None
         item["video_title"] = video.get("title", "") if video else ""
         item["video_url"] = video.get("url", "") if video else ""
+        item["topic_id"] = video.get("topic_id") if video else job_payload(item).get("topic_id", 1)
         enriched.append(item)
     return enriched

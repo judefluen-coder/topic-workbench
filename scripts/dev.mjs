@@ -205,14 +205,14 @@ if (installOnly) {
   process.exit(0);
 }
 
-console.log("\nStarting Tech PR Workbench:");
+console.log("\nStarting Topic Workbench:");
 console.log("- Backend:  http://127.0.0.1:8000");
 console.log("- Frontend: http://127.0.0.1:5173");
 console.log("- Worker:   persistent local task processor");
 console.log("Press Ctrl+C to stop all three processes.\n");
 
 children = [
-  startProcess("backend", "uv", ["run", "--project", "backend", "uvicorn", "--app-dir", "backend", "app.main:app", "--reload", "--host", "127.0.0.1", "--port", "8000"]),
+  startProcess("backend", "uv", ["run", "--project", "backend", "uvicorn", "--app-dir", "backend", "app.main:app", "--reload", "--reload-dir", "backend/app", "--host", "127.0.0.1", "--port", "8000"]),
   startProcess("worker", "uv", ["--directory", "backend", "run", "python", "-m", "app.worker"]),
   startProcess("frontend", command("npm"), ["run", "dev", "--prefix", "frontend"]),
 ];

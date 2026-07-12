@@ -20,12 +20,13 @@ from app.downloads import list_download_tasks, run_authorized_download
 from app.exports import clip_marks_to_csv, segments_to_srt, segments_to_vtt
 from app.jobs import get_job, list_jobs, retry_job
 from app.render_jobs import create_render_clips_job
-from app.schemas import AutomationRequest, ClipMarkCreate, ClipMarkReorder, ClipMarkUpdate, DailyRunRequest, DownloadRequest, DownloadTranslateRequest, PersonCreate, RenderClipsRequest, VideoUpdate, YoutubeSyncRequest
+from app.schemas import AutomationRequest, ClipMarkCreate, ClipMarkReorder, ClipMarkUpdate, DailyRunRequest, DownloadRequest, DownloadTranslateRequest, PersonCreate, RenderClipsRequest, TopicCreate, TopicUpdate, VideoUpdate, YoutubeSyncRequest
 from app.seed import seed_people_if_empty
 from app.system import system_status
 from app.media import import_authorized_media
 from app.workflow import clip_payload, create_download_translate_job, create_subtitle_reprocess_job, media_asset_with_url
 from app.youtube import sync_youtube
+from app.topics import create_topic, ensure_default_topic, get_topic, list_topics, update_topic
 
 VALID_STATUSES = {
     "new",
@@ -49,7 +50,7 @@ VALID_STATUSES = {
 CLIP_MARK_ORDER_SQL = "position IS NULL, position, start_seconds, id"
 
 settings.ensure_dirs()
-app = FastAPI(title="科技采访 PR 工作台 API", version="0.1.0")
+app = FastAPI(title="Topic Workbench API", version="0.2.0")
 app.mount("/media/downloads", StaticFiles(directory=settings.download_dir), name="downloaded_media")
 app.mount("/media/uploads", StaticFiles(directory=settings.upload_dir), name="uploaded_media")
 app.mount("/media/exports", StaticFiles(directory=settings.export_dir), name="exported_media")
@@ -65,6 +66,7 @@ app.add_middleware(
 @app.on_event("startup")
 def startup() -> None:
     init_db()
+    ensure_default_topic()
     seed_people_if_empty()
 
 
@@ -107,10 +109,36 @@ def dashboard() -> dict:
     }
 
 
-@app.get("/api/daily")
-def daily(date: str | None = None, start_date: str | None = None, end_date: str | None = None) -> dict:
+@app.get("/api/topics")
+def topics_index() -> list[dict]:
+    return list_topics()
+
+
+@app.post("/api/topics")
+def topics_create(payload: TopicCreate) -> dict:
+    return create_topic(payload.model_dump())
+
+
+@app.get("/api/topics/{topic_id}")
+def topics_detail(topic_id: int) -> dict:
     try:
-        return get_daily_report(start_date or date, end_date)
+        return get_topic(topic_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.patch("/api/topics/{topic_id}")
+def topics_update(topic_id: int, payload: TopicUpdate) -> dict:
+    try:
+        return update_topic(topic_id, payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/daily")
+def daily(date: str | None = None, start_date: str | None = None, end_date: str | None = None, topic_id: int = Query(default=1, gt=0)) -> dict:
+    try:
+        return get_daily_report(start_date or date, end_date, topic_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -118,14 +146,14 @@ def daily(date: str | None = None, start_date: str | None = None, end_date: str 
 @app.post("/api/daily/run")
 async def daily_run(payload: DailyRunRequest) -> dict:
     try:
-        return await run_daily_discovery(payload.date, payload.limit_per_query, payload.start_date, payload.end_date)
+        return await run_daily_discovery(payload.date, payload.limit_per_query, payload.start_date, payload.end_date, payload.topic_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/jobs")
-def jobs_index(video_id: int | None = None, limit: int = Query(default=100, ge=1, le=500)) -> list[dict]:
-    return list_jobs(video_id=video_id, limit=limit)
+def jobs_index(video_id: int | None = None, topic_id: int | None = Query(default=None, gt=0), limit: int = Query(default=100, ge=1, le=500)) -> list[dict]:
+    return list_jobs(video_id=video_id, limit=limit, topic_id=topic_id)
 
 
 @app.get("/api/jobs/{job_id}")
@@ -198,10 +226,11 @@ async def import_people_csv(file: UploadFile = File(...)) -> dict:
 def list_videos(
     status: str | None = None,
     search: str = "",
+    topic_id: int = Query(default=1, gt=0),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> list[dict]:
-    clauses = []
-    params: list[object] = []
+    clauses = ["topic_id = ?"]
+    params: list[object] = [topic_id]
     if status:
         clauses.append("status = ?")
         params.append(status)
@@ -273,7 +302,7 @@ async def sync_youtube_endpoint(payload: YoutubeSyncRequest) -> dict:
         )
         job_id = cursor.lastrowid
     try:
-        result = await sync_youtube(payload.days_back, payload.limit_per_query, payload.include_demo_when_unconfigured)
+        result = await sync_youtube(payload.days_back, payload.limit_per_query, payload.include_demo_when_unconfigured, topic_id=payload.topic_id)
         status = "completed"
         message = result.get("message", "")
     except Exception as exc:

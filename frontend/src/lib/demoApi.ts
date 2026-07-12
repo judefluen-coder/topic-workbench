@@ -1,7 +1,26 @@
-import type { ClipMark, ClipPayload, ClipRenderOptions, ClipRenderResult, DailyReport, Job, MediaAsset, Transcript, Video } from "../types";
+import type { ClipMark, ClipPayload, ClipRenderOptions, ClipRenderResult, DailyReport, Job, MediaAsset, Topic, TopicInput, Transcript, Video } from "../types";
 
 const DEMO_VIDEO_ID = 1002;
 const timestamp = "2026-07-11T08:00:00+00:00";
+
+let demoTopics: Topic[] = [
+  {
+    id: 1,
+    name: "AI 科技采访（示例）",
+    description: "体验如何按主题组织抓取、筛选和剪辑。",
+    keywords: ["AI interview", "人工智能 访谈", "大模型 访谈"],
+    excluded_keywords: ["shorts", "招聘"],
+    focus_people: ["Sam Altman", "Jensen Huang"],
+    channel_terms: ["OpenAI", "NVIDIA"],
+    bilibili_channel_uids: [],
+    sources: ["youtube", "bilibili"],
+    ranking_mode: "balanced",
+    video_count: 3,
+    clip_count: 3,
+    created_at: timestamp,
+    updated_at: timestamp,
+  },
+];
 
 const videos: Video[] = [
   buildVideo({
@@ -79,16 +98,31 @@ let demoJobs: Job[] = [
 ];
 
 export const demoApi = {
-  daily: async (params: { date?: string; start_date?: string; end_date?: string } = {}) => {
-    await delay(120);
-    return buildReport(params.start_date || params.date, params.end_date);
+  topics: async () => clone(demoTopics),
+
+  createTopic: async (payload: TopicInput) => {
+    const topic: Topic = { ...payload, id: Math.max(...demoTopics.map((item) => item.id), 0) + 1, video_count: 0, clip_count: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+    demoTopics = [topic, ...demoTopics];
+    return clone(topic);
   },
 
-  runDaily: async (payload: { date?: string; start_date?: string; end_date?: string } = {}) => {
+  updateTopic: async (id: number, payload: Partial<TopicInput>) => {
+    const index = demoTopics.findIndex((item) => item.id === id);
+    if (index < 0) throw new Error("主题不存在。");
+    demoTopics[index] = { ...demoTopics[index], ...payload, updated_at: new Date().toISOString() };
+    return clone(demoTopics[index]);
+  },
+
+  daily: async (params: { topic_id?: number; date?: string; start_date?: string; end_date?: string } = {}) => {
+    await delay(120);
+    return buildReport(params.start_date || params.date, params.end_date, params.topic_id);
+  },
+
+  runDaily: async (payload: { topic_id?: number; date?: string; start_date?: string; end_date?: string } = {}) => {
     await delay(700);
     const job = buildJob(nextJobId++, "daily_discovery", "completed", "体验抓取完成，得到 3 条采访候选。", null, 100, 1);
     demoJobs = [job, ...demoJobs];
-    return { ...buildReport(payload.start_date || payload.date, payload.end_date), latest_job: job, job_id: job.id };
+    return { ...buildReport(payload.start_date || payload.date, payload.end_date, payload.topic_id), latest_job: job, job_id: job.id };
   },
 
   jobs: async () => clone(demoJobs),
@@ -193,9 +227,10 @@ function buildVideo(overrides: Partial<Video> & Pick<Video, "id" | "title">): Vi
   const { id, title, ...rest } = overrides;
   return {
     id,
+    topic_id: 1,
     platform: "youtube",
     external_id: `demo-${overrides.id}`,
-    url: "https://github.com/judefluen-coder/tech-pr-workbench",
+    url: "https://github.com/judefluen-coder/topic-workbench",
     title,
     description: "GitHub Pages 工作流体验数据，不对应真实采访。",
     channel_title: "Demo Studio",
@@ -243,17 +278,19 @@ function buildJob(id: number, type: string, status: string, message: string, vid
   };
 }
 
-function buildReport(start?: string, end?: string): DailyReport {
+function buildReport(start?: string, end?: string, topicId = 1): DailyReport {
   const date = validDate(start) || today();
   const endDate = validDate(end) || date;
+  const topic = demoTopics.find((item) => item.id === topicId) || demoTopics[0];
   return {
     date,
     start_date: date,
     end_date: endDate,
+    topic: clone(topic),
     timezone: "Asia/Shanghai",
     window_start: `${date}T00:00:00+08:00`,
     window_end: `${endDate}T23:59:59+08:00`,
-    items: clone(videos.map((video, index) => ({ ...video, published_at: `${date}T${String(10 + index * 3).padStart(2, "0")}:00:00+08:00` }))),
+    items: clone(videos.map((video, index) => ({ ...video, topic_id: topic.id, published_at: `${date}T${String(10 + index * 3).padStart(2, "0")}:00:00+08:00` }))),
     source_runs: [
       { name: "YouTube", tier: "stable", status: "completed", message: "体验模式：已加载 2 条 YouTube 样例。" },
       { name: "Podcast RSS", tier: "stable", status: "skipped", message: "体验模式：保留为后续来源。" },

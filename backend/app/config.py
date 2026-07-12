@@ -94,7 +94,7 @@ class Settings:
     def bilibili_channel_uids(self) -> list[str]:
         raw = os.getenv(
             "BILIBILI_CHANNEL_UIDS",
-            "280780745,508452265,3546860354538082,13260662,73414544,673779175,478559884",
+            "",
         )
         return [part.strip() for part in raw.split(",") if part.strip()]
 
@@ -111,23 +111,23 @@ class Settings:
 
     @property
     def database_path(self) -> Path:
-        return self._path_from_env("TECH_PR_DB_PATH", "storage/app.db")
+        return self._path_from_env("TOPIC_WORKBENCH_DB_PATH", "storage/app.db", "TECH_PR_DB_PATH")
 
     @property
     def upload_dir(self) -> Path:
-        return self._path_from_env("TECH_PR_UPLOAD_DIR", "storage/uploads")
+        return self._path_from_env("TOPIC_WORKBENCH_UPLOAD_DIR", "storage/uploads", "TECH_PR_UPLOAD_DIR")
 
     @property
     def export_dir(self) -> Path:
-        return self._path_from_env("TECH_PR_EXPORT_DIR", "storage/exports")
+        return self._path_from_env("TOPIC_WORKBENCH_EXPORT_DIR", "storage/exports", "TECH_PR_EXPORT_DIR")
 
     @property
     def tmp_dir(self) -> Path:
-        return self._path_from_env("TECH_PR_TMP_DIR", "storage/tmp")
+        return self._path_from_env("TOPIC_WORKBENCH_TMP_DIR", "storage/tmp", "TECH_PR_TMP_DIR")
 
     @property
     def delete_after_processing_default(self) -> bool:
-        return _as_bool(os.getenv("TECH_PR_DEFAULT_MEDIA_DELETE_AFTER_PROCESSING"), True)
+        return _as_bool(os.getenv("TOPIC_WORKBENCH_DEFAULT_MEDIA_DELETE_AFTER_PROCESSING", os.getenv("TECH_PR_DEFAULT_MEDIA_DELETE_AFTER_PROCESSING")), True)
 
     def ensure_dirs(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -136,8 +136,8 @@ class Settings:
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
         self.download_dir.mkdir(parents=True, exist_ok=True)
 
-    def _path_from_env(self, key: str, default: str) -> Path:
-        raw = os.getenv(key, default)
+    def _path_from_env(self, key: str, default: str, legacy_key: str | None = None) -> Path:
+        raw = os.getenv(key, os.getenv(legacy_key, default) if legacy_key else default)
         path = Path(raw).expanduser()
         if not path.is_absolute():
             path = ROOT_DIR / path

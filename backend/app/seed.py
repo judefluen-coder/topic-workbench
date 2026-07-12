@@ -4,8 +4,8 @@ from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from app.db import get_connection, now_iso
-from app.scoring import interview_confidence, people_signals_for_video, priority_score
 from app.summaries import build_discovery_summary
+from app.topics import ensure_default_topic, get_topic, topic_priority_score, topic_signals
 
 DEFAULT_PEOPLE = [
     ("Sam Altman", "Sam Altman", "OpenAI, Altman", 5, "AI 公司与平台生态重点人物"),
@@ -82,47 +82,49 @@ def _demo_videos() -> list[dict]:
     ]
 
 
-def seed_people_if_empty() -> None:
+def seed_people_if_empty(topic_id: int = 1) -> None:
+    topic = ensure_default_topic() if topic_id == 1 else get_topic(topic_id)
     with get_connection() as conn:
         timestamp = now_iso()
-        existing = {row["name"] for row in conn.execute("SELECT name FROM people").fetchall()}
+        existing = {row["name"] for row in conn.execute("SELECT name FROM people WHERE topic_id = ?", (topic_id,)).fetchall()}
         rows = [
-            (name, english, aliases, priority, notes, timestamp, timestamp)
+            (topic_id, name, english, aliases, priority, notes, timestamp, timestamp)
             for name, english, aliases, priority, notes in DEFAULT_PEOPLE
-            if name not in existing
+            if name in topic["focus_people"] and name not in existing
         ]
         if rows:
             conn.executemany(
                 """
-                INSERT INTO people (name, english_name, aliases, priority, notes, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO people (topic_id, name, english_name, aliases, priority, notes, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
 
 
-def seed_demo_videos() -> int:
-    seed_people_if_empty()
+def seed_demo_videos(topic_id: int = 1) -> int:
+    seed_people_if_empty(topic_id)
+    topic = get_topic(topic_id)
     with get_connection() as conn:
-        people = [dict(row) for row in conn.execute("SELECT * FROM people").fetchall()]
         inserted = 0
         for item in _demo_videos():
-            matches, names, candidate_people, reason = people_signals_for_video(
-                item["title"], item["description"], item["channel_title"], people
+            matches, names, candidate_people, reason, confidence = topic_signals(
+                item["title"], item["description"], item["channel_title"], topic
             )
-            confidence = interview_confidence(item["title"], item["description"], item["duration_seconds"])
-            score = priority_score(matches, confidence, item["published_at"], item["channel_title"], item["view_count"])
-            summary = build_discovery_summary(item["title"], item["description"], item["channel_title"], names or candidate_people)
+            score = topic_priority_score(matches, confidence, item["published_at"], item["view_count"], topic["ranking_mode"])
+            summary = build_discovery_summary(
+                item["title"], item["description"], item["channel_title"], names or candidate_people, topic["name"], topic["keywords"]
+            )
             timestamp = now_iso()
             cursor = conn.execute(
                 """
                 INSERT INTO videos (
-                  platform, external_id, url, title, description, channel_title, published_at,
+                  topic_id, platform, external_id, url, title, description, channel_title, published_at,
                   duration_seconds, view_count, thumbnail_url, matched_people, candidate_people, people_match_reason, interview_confidence,
                   priority_score, status, compliance_note, summary, source_tier, created_at, updated_at
                 )
-                VALUES ('youtube', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', 'metadata_only', ?, 'stable', ?, ?)
-                ON CONFLICT(platform, external_id) DO UPDATE SET
+                VALUES (?, 'youtube', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', 'metadata_only', ?, 'stable', ?, ?)
+                ON CONFLICT(topic_id, platform, external_id) DO UPDATE SET
                   title = excluded.title,
                   description = excluded.description,
                   channel_title = excluded.channel_title,
@@ -140,6 +142,7 @@ def seed_demo_videos() -> int:
                   updated_at = excluded.updated_at
                 """,
                 (
+                    topic_id,
                     item["external_id"],
                     item["url"],
                     item["title"],

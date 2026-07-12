@@ -48,7 +48,7 @@ def _dispatch_job(job: dict) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Tech PR Workbench persistent background worker")
+    parser = argparse.ArgumentParser(description="Topic Workbench persistent background worker")
     parser.add_argument("--once", action="store_true", help="Process at most one queued job and exit")
     args = parser.parse_args()
 
@@ -62,7 +62,7 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
-    poll_seconds = max(float(os.getenv("TECH_PR_WORKER_POLL_SECONDS", "0.8")), 0.1)
+    poll_seconds = max(float(os.getenv("TOPIC_WORKBENCH_WORKER_POLL_SECONDS", os.getenv("TECH_PR_WORKER_POLL_SECONDS", "0.8"))), 0.1)
     print("[worker] ready", flush=True)
     while _running:
         processed = run_worker_once()

@@ -12,18 +12,10 @@ import httpx
 from app.config import settings
 from app.db import get_connection, now_iso, row_to_dict
 from app.opencli_runtime import opencli_path, opencli_window_args, prepare_opencli_browser
-from app.scoring import interview_confidence, people_signals_for_video, priority_score
-from app.summaries import build_discovery_summary, looks_ai_related
+from app.summaries import build_discovery_summary
+from app.topics import discovery_queries, get_topic, topic_priority_score, topic_signals
 
 
-BILIBILI_SEARCH_QUERIES = [
-    "AI 采访",
-    "人工智能 访谈",
-    "大模型 访谈",
-    "OpenAI 访谈",
-    "Anthropic 访谈",
-    "DeepSeek 访谈",
-]
 BILIBILI_HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "Referer": "https://www.bilibili.com",
@@ -32,7 +24,15 @@ MEDIA_SUFFIXES = {".mp4", ".m4a", ".mp3", ".mov", ".webm", ".mkv", ".flv"}
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
-def sync_bilibili(limit_per_query: int = 5, published_after: str | None = None, published_before: str | None = None) -> dict:
+def sync_bilibili(
+    limit_per_query: int = 5,
+    published_after: str | None = None,
+    published_before: str | None = None,
+    topic_id: int = 1,
+) -> dict:
+    topic = get_topic(topic_id)
+    if "bilibili" not in topic["sources"]:
+        return {"mode": "disabled", "queried": 0, "candidates": 0, "inserted": 0, "message": "当前主题未启用 B站。"}
     if not settings.bilibili_discovery_enabled or not settings.opencli_discovery_enabled:
         return {"mode": "disabled", "queried": 0, "candidates": 0, "inserted": 0, "message": "B站抓取已关闭。"}
 
@@ -43,15 +43,15 @@ def sync_bilibili(limit_per_query: int = 5, published_after: str | None = None, 
     raw_items: list[dict] = []
     errors: list[str] = []
     queried = 0
-    channel_limit = settings.bilibili_channel_scan_limit
-    for uid in settings.bilibili_channel_uids[:channel_limit]:
+    channel_uids = topic.get("bilibili_channel_uids", [])
+    for uid in channel_uids[:12]:
         queried += 1
         try:
             raw_items.extend(_run_opencli_user_videos(opencli, uid, max(limit_per_query, 5)))
         except Exception as exc:
             errors.append(f"账号 {uid} 抓取失败：{exc}")
 
-    for query in BILIBILI_SEARCH_QUERIES[: max(3, min(len(BILIBILI_SEARCH_QUERIES), limit_per_query))]:
+    for query in discovery_queries(topic, limit=max(3, min(12, limit_per_query * 2))):
         queried += 1
         try:
             raw_items.extend(_run_opencli_search(opencli, query, max(limit_per_query, 5)))
@@ -69,7 +69,7 @@ def sync_bilibili(limit_per_query: int = 5, published_after: str | None = None, 
         if metadata:
             enriched.append(metadata)
 
-    inserted = _upsert_bilibili_items(enriched, published_after, published_before)
+    inserted = _upsert_bilibili_items(enriched, published_after, published_before, topic_id, topic)
     message = "已同步 B站候选，并按真实发布时间过滤。"
     if errors:
         message += f" 部分来源失败 {len(errors)} 个。"
@@ -288,36 +288,41 @@ def _metadata_from_opencli_item(bvid: str, item: dict) -> dict | None:
     }
 
 
-def _upsert_bilibili_items(items: list[dict], published_after: str | None, published_before: str | None) -> int:
+def _upsert_bilibili_items(
+    items: list[dict],
+    published_after: str | None,
+    published_before: str | None,
+    topic_id: int = 1,
+    topic: dict | None = None,
+) -> int:
     if not items:
         return 0
     with get_connection() as conn:
-        people = [dict(row) for row in conn.execute("SELECT * FROM people").fetchall()]
+        topic = topic or get_topic(topic_id)
         inserted_or_updated = 0
         for item in items:
             title = item.get("title", "")
             description = item.get("description", "") or ""
             channel = item.get("channel_title") or ""
-            if not looks_ai_related(title, description, channel):
-                continue
             published_at = item.get("published_at", "")
             if not published_at or not _within_utc_window(published_at, published_after, published_before):
                 continue
-            matches, names, candidate_people, reason = people_signals_for_video(title, description, channel, people)
-            confidence = interview_confidence(title, description, int(item.get("duration_seconds") or 0))
+            matches, names, candidate_people, reason, confidence = topic_signals(title, description, channel, topic)
+            if confidence <= 0:
+                continue
             view_count = int(item.get("view_count") or 0)
-            score = priority_score(matches, confidence, published_at, channel, view_count)
-            summary = build_discovery_summary(title, description, channel, names or candidate_people)
+            score = topic_priority_score(matches, confidence, published_at, view_count, topic["ranking_mode"])
+            summary = build_discovery_summary(title, description, channel, names or candidate_people, topic["name"], topic["keywords"])
             timestamp = now_iso()
             cursor = conn.execute(
                 """
                 INSERT INTO videos (
-                  platform, external_id, url, title, description, channel_title, published_at,
+                  topic_id, platform, external_id, url, title, description, channel_title, published_at,
                   duration_seconds, view_count, like_count, thumbnail_url, matched_people,
                   candidate_people, people_match_reason, interview_confidence, priority_score, status, compliance_note, summary, source_tier, created_at, updated_at
                 )
-                VALUES ('bilibili', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', 'metadata_only', ?, 'stable', ?, ?)
-                ON CONFLICT(platform, external_id) DO UPDATE SET
+                VALUES (?, 'bilibili', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', 'metadata_only', ?, 'stable', ?, ?)
+                ON CONFLICT(topic_id, platform, external_id) DO UPDATE SET
                   url = excluded.url,
                   title = excluded.title,
                   description = excluded.description,
@@ -337,6 +342,7 @@ def _upsert_bilibili_items(items: list[dict], published_after: str | None, publi
                   updated_at = excluded.updated_at
                 """,
                 (
+                    topic_id,
                     str(item["external_id"]),
                     item["url"],
                     title,

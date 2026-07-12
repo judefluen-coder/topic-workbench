@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - codex/local-studio-v1
   workflow_dispatch:
 
 permissions:

@@ -50,8 +50,9 @@ const editorDefaults = {
 
 test("workspace state restores the selected view, date range, and video", () => {
   const storage = fakeStorage();
-  workspace.saveWorkspaceState({ startDate: "2026-07-01", endDate: "2026-07-03", selectedVideoId: 74, view: "editor" }, storage);
+  workspace.saveWorkspaceState({ topicId: 8, startDate: "2026-07-01", endDate: "2026-07-03", selectedVideoId: 74, view: "editor" }, storage);
   assert.deepEqual(workspace.loadWorkspaceState(storage), {
+    topicId: 8,
     startDate: "2026-07-01",
     endDate: "2026-07-03",
     selectedVideoId: 74,
@@ -61,7 +62,7 @@ test("workspace state restores the selected view, date range, and video", () => 
 
 test("workspace state ignores malformed persisted data", () => {
   const storage = fakeStorage();
-  storage.setItem("tech-pr-workbench:workspace:v1", '{"startDate":"bad","view":"unknown"}');
+  storage.setItem("topic-workbench:workspace:v1", '{"startDate":"bad","view":"unknown"}');
   assert.equal(workspace.loadWorkspaceState(storage), null);
 });
 
@@ -81,7 +82,7 @@ test("clip editor state restores drafts and sanitizes render options", () => {
   assert.equal(restored.form.label, "观点");
   assert.equal(restored.transcriptSearch, "agent");
 
-  storage.setItem("tech-pr-workbench:editor:v1:75", '{"currentTime":-1,"exportOptions":{"output_profile":"square","focus_x":900}}');
+  storage.setItem("topic-workbench:editor:v1:75", '{"currentTime":-1,"exportOptions":{"output_profile":"square","focus_x":900}}');
   assert.deepEqual(workspace.loadClipEditorState(75, editorDefaults, storage), editorDefaults);
 });
 

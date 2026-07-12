@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Iterator
@@ -33,29 +34,49 @@ def init_db() -> None:
     with get_connection() as conn:
         conn.executescript(
             """
+            CREATE TABLE IF NOT EXISTS topics (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL,
+              description TEXT DEFAULT '',
+              keywords TEXT NOT NULL DEFAULT '[]',
+              excluded_keywords TEXT NOT NULL DEFAULT '[]',
+              focus_people TEXT NOT NULL DEFAULT '[]',
+              channel_terms TEXT NOT NULL DEFAULT '[]',
+              bilibili_channel_uids TEXT NOT NULL DEFAULT '[]',
+              sources TEXT NOT NULL DEFAULT '["youtube", "bilibili"]',
+              ranking_mode TEXT NOT NULL DEFAULT 'balanced',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS people (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
+              topic_id INTEGER NOT NULL DEFAULT 1,
               name TEXT NOT NULL,
               english_name TEXT DEFAULT '',
               aliases TEXT DEFAULT '',
               priority INTEGER NOT NULL DEFAULT 3,
               notes TEXT DEFAULT '',
               created_at TEXT NOT NULL,
-              updated_at TEXT NOT NULL
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY(topic_id) REFERENCES topics(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS source_queries (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
+              topic_id INTEGER NOT NULL DEFAULT 1,
               person_id INTEGER,
               platform TEXT NOT NULL DEFAULT 'youtube',
               query TEXT NOT NULL,
               last_run_at TEXT,
               created_at TEXT NOT NULL,
-              FOREIGN KEY(person_id) REFERENCES people(id) ON DELETE CASCADE
+              FOREIGN KEY(person_id) REFERENCES people(id) ON DELETE CASCADE,
+              FOREIGN KEY(topic_id) REFERENCES topics(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS videos (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
+              topic_id INTEGER NOT NULL DEFAULT 1,
               platform TEXT NOT NULL DEFAULT 'youtube',
               external_id TEXT NOT NULL,
               url TEXT NOT NULL,
@@ -76,7 +97,8 @@ def init_db() -> None:
               compliance_note TEXT NOT NULL DEFAULT 'metadata_only',
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL,
-              UNIQUE(platform, external_id)
+              UNIQUE(topic_id, platform, external_id),
+              FOREIGN KEY(topic_id) REFERENCES topics(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS media_assets (
@@ -148,6 +170,9 @@ def init_db() -> None:
             """
         )
         _ensure_column(conn, "videos", "summary", "TEXT DEFAULT ''")
+        _ensure_column(conn, "people", "topic_id", "INTEGER NOT NULL DEFAULT 1")
+        _ensure_column(conn, "source_queries", "topic_id", "INTEGER NOT NULL DEFAULT 1")
+        _ensure_column(conn, "videos", "topic_id", "INTEGER NOT NULL DEFAULT 1")
         _ensure_column(conn, "videos", "source_tier", "TEXT NOT NULL DEFAULT 'stable'")
         _ensure_column(conn, "videos", "last_error", "TEXT DEFAULT ''")
         _ensure_column(conn, "videos", "candidate_people", "TEXT DEFAULT ''")
@@ -156,6 +181,7 @@ def init_db() -> None:
         _ensure_column(conn, "jobs", "result", "TEXT DEFAULT '{}'")
         _ensure_column(conn, "jobs", "progress", "INTEGER NOT NULL DEFAULT 0")
         _ensure_column(conn, "jobs", "attempts", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_default_topic_row(conn)
         _backfill_clip_positions(conn)
         _refresh_people_signals(conn)
 
@@ -164,6 +190,33 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition
     columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     if column not in columns:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _ensure_default_topic_row(conn: sqlite3.Connection) -> None:
+    from app.topics import DEFAULT_TOPIC
+
+    timestamp = now_iso()
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO topics (
+          id, name, description, keywords, excluded_keywords, focus_people, channel_terms,
+          bilibili_channel_uids, sources, ranking_mode, created_at, updated_at
+        ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            DEFAULT_TOPIC["name"],
+            DEFAULT_TOPIC["description"],
+            json.dumps(DEFAULT_TOPIC["keywords"], ensure_ascii=False),
+            json.dumps(DEFAULT_TOPIC["excluded_keywords"], ensure_ascii=False),
+            json.dumps(DEFAULT_TOPIC["focus_people"], ensure_ascii=False),
+            json.dumps(DEFAULT_TOPIC["channel_terms"], ensure_ascii=False),
+            json.dumps(DEFAULT_TOPIC["bilibili_channel_uids"], ensure_ascii=False),
+            json.dumps(DEFAULT_TOPIC["sources"], ensure_ascii=False),
+            DEFAULT_TOPIC["ranking_mode"],
+            timestamp,
+            timestamp,
+        ),
+    )
 
 
 def _backfill_clip_positions(conn: sqlite3.Connection) -> None:
@@ -183,33 +236,39 @@ def _backfill_clip_positions(conn: sqlite3.Connection) -> None:
 
 
 def _refresh_people_signals(conn: sqlite3.Connection) -> None:
-    from app.scoring import people_signals_for_video, priority_score
     from app.summaries import build_discovery_summary
+    from app.topics import topic_from_row, topic_priority_score, topic_signals
 
-    people = [dict(row) for row in conn.execute("SELECT * FROM people").fetchall()]
-    if not people:
-        return
+    topics = {
+        row["id"]: topic_from_row(row_to_dict(row))
+        for row in conn.execute("SELECT * FROM topics").fetchall()
+    }
     videos = conn.execute("SELECT * FROM videos").fetchall()
     for row in videos:
         video = row_to_dict(row)
-        matches, matched_names, candidate_people, reason = people_signals_for_video(
+        topic = topics.get(video.get("topic_id"))
+        if not topic:
+            continue
+        matches, matched_names, candidate_people, reason, confidence = topic_signals(
             video.get("title", ""),
             video.get("description", ""),
             video.get("channel_title", ""),
-            people,
+            topic,
         )
-        score = priority_score(
+        score = topic_priority_score(
             matches,
-            float(video.get("interview_confidence") or 0),
+            confidence,
             video.get("published_at", ""),
-            video.get("channel_title", ""),
             int(video.get("view_count") or 0),
+            topic["ranking_mode"],
         )
         summary = build_discovery_summary(
             video.get("title", ""),
             video.get("description", ""),
             video.get("channel_title", ""),
             matched_names or candidate_people,
+            topic["name"],
+            topic["keywords"],
         )
         conn.execute(
             """

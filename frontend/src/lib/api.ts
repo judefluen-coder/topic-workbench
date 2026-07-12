@@ -1,4 +1,4 @@
-import type { AutomationResult, ClipMark, ClipPayload, ClipRenderOptions, DailyReport, DashboardData, Job, MediaAsset, Person, SystemStatus, Video, VideoDetail, VideoStatus } from "../types";
+import type { AutomationResult, ClipMark, ClipPayload, ClipRenderOptions, DailyReport, DashboardData, Job, MediaAsset, Person, SystemStatus, Topic, TopicInput, Video, VideoDetail, VideoStatus } from "../types";
 import { demoApi } from "./demoApi";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -14,17 +14,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 const liveApi = {
-  daily: (params: { date?: string; start_date?: string; end_date?: string } = {}) => {
+  topics: () => request<Topic[]>("/api/topics"),
+  createTopic: (payload: TopicInput) => request<Topic>("/api/topics", { method: "POST", body: JSON.stringify(payload) }),
+  updateTopic: (id: number, payload: Partial<TopicInput>) => request<Topic>(`/api/topics/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  daily: (params: { topic_id?: number; date?: string; start_date?: string; end_date?: string } = {}) => {
     const search = new URLSearchParams();
+    if (params.topic_id) search.set("topic_id", String(params.topic_id));
     if (params.date) search.set("date", params.date);
     if (params.start_date) search.set("start_date", params.start_date);
     if (params.end_date) search.set("end_date", params.end_date);
     const query = search.toString();
     return request<DailyReport>(`/api/daily${query ? `?${query}` : ""}`);
   },
-  runDaily: (payload: { date?: string; start_date?: string; end_date?: string; limit_per_query?: number } = {}) =>
+  runDaily: (payload: { topic_id?: number; date?: string; start_date?: string; end_date?: string; limit_per_query?: number } = {}) =>
     request<DailyReport>("/api/daily/run", { method: "POST", body: JSON.stringify(payload) }),
-  jobs: () => request<Job[]>("/api/jobs?limit=200"),
+  jobs: (topicId?: number) => request<Job[]>(`/api/jobs?limit=200${topicId ? `&topic_id=${topicId}` : ""}`),
   job: (id: number) => request<Job>(`/api/jobs/${id}`),
   retryJob: (id: number) => request<Job>(`/api/jobs/${id}/retry`, { method: "POST" }),
   dashboard: () => request<DashboardData>("/api/dashboard"),
