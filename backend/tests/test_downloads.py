@@ -16,7 +16,7 @@ class Completed:
 
 
 def _seed_video(monkeypatch, tmp_path: Path, title: str = "YouTube warning test") -> Path:
-    monkeypatch.setenv("TECH_PR_DB_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setenv("TOPIC_WORKBENCH_DB_PATH", str(tmp_path / "app.db"))
     monkeypatch.setenv("DOWNLOAD_DIR", str(tmp_path / "downloads"))
     monkeypatch.setenv("DOWNLOAD_ENGINE", "yt-dlp")
     init_db()

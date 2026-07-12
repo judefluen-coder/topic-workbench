@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile
 
@@ -35,7 +37,8 @@ async def import_authorized_media(
             raise HTTPException(status_code=400, detail=f"不支持的素材格式：{suffix}")
         kind = "transcript" if suffix in {".srt", ".vtt", ".txt"} else "media"
         settings.upload_dir.mkdir(parents=True, exist_ok=True)
-        safe_name = f"video-{video_id}-{int(now_iso().replace(':', '').replace('-', '')[:14])}{suffix}"
+        upload_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        safe_name = f"video-{video_id}-{upload_stamp}-{uuid4().hex[:8]}{suffix}"
         destination = settings.upload_dir / safe_name
         with destination.open("wb") as handle:
             shutil.copyfileobj(upload.file, handle)
@@ -128,4 +131,3 @@ def cleanup_processed_media(video_id: int) -> list[str]:
                 (row["id"],),
             )
     return removed
-

@@ -15,7 +15,7 @@ class Completed:
 
 
 def test_authorized_download_uses_configured_ytdlp_for_video_and_subtitles(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("TECH_PR_DB_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setenv("TOPIC_WORKBENCH_DB_PATH", str(tmp_path / "app.db"))
     monkeypatch.setenv("DOWNLOAD_DIR", str(tmp_path / "downloads"))
     monkeypatch.setenv("YTDLP_PATH", "yt-dlp-custom")
     monkeypatch.setattr(downloads.shutil, "which", lambda name: "/usr/local/bin/yt-dlp-custom" if name == "yt-dlp-custom" else None)

@@ -8,7 +8,7 @@ let demoTopics: Topic[] = [
     id: 1,
     name: "AI 科技采访（示例）",
     description: "体验如何按主题组织抓取、筛选和剪辑。",
-    keywords: ["AI interview", "人工智能 访谈", "大模型 访谈"],
+    keywords: ["AI interview", "AI 访谈", "人工智能 访谈", "大模型 访谈"],
     excluded_keywords: ["shorts", "招聘"],
     focus_people: ["Sam Altman", "Jensen Huang"],
     channel_terms: ["OpenAI", "NVIDIA"],

@@ -4,7 +4,7 @@ from app.worker import run_worker_once
 
 
 def test_interrupted_jobs_are_recovered_and_failed_jobs_can_retry(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("TECH_PR_DB_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setenv("TOPIC_WORKBENCH_DB_PATH", str(tmp_path / "app.db"))
     init_db()
     queued = enqueue_job("download_translate", {"video_id": 7}, "等待处理")
 
@@ -24,7 +24,7 @@ def test_interrupted_jobs_are_recovered_and_failed_jobs_can_retry(monkeypatch, t
 
 
 def test_worker_does_not_claim_api_owned_job_types(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("TECH_PR_DB_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setenv("TOPIC_WORKBENCH_DB_PATH", str(tmp_path / "app.db"))
     init_db()
     job = enqueue_job("daily_discovery", {}, "API 正在抓取")
 
@@ -35,7 +35,7 @@ def test_worker_does_not_claim_api_owned_job_types(monkeypatch, tmp_path) -> Non
 
 
 def test_video_jobs_are_deduplicated_and_filtered_before_limit(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("TECH_PR_DB_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setenv("TOPIC_WORKBENCH_DB_PATH", str(tmp_path / "app.db"))
     init_db()
     first = enqueue_job("render_clips", {"video_id": 7}, "等待导出", dedupe_video_id=7)
     duplicate = enqueue_job("render_clips", {"video_id": 7}, "重复导出", dedupe_video_id=7)
@@ -46,7 +46,7 @@ def test_video_jobs_are_deduplicated_and_filtered_before_limit(monkeypatch, tmp_
 
 
 def test_video_jobs_include_context_for_restored_task_lists(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("TECH_PR_DB_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setenv("TOPIC_WORKBENCH_DB_PATH", str(tmp_path / "app.db"))
     init_db()
     timestamp = now_iso()
     with get_connection() as conn:
@@ -68,7 +68,7 @@ def test_video_jobs_include_context_for_restored_task_lists(monkeypatch, tmp_pat
 
 
 def test_recovery_only_requeues_worker_owned_jobs(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("TECH_PR_DB_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setenv("TOPIC_WORKBENCH_DB_PATH", str(tmp_path / "app.db"))
     init_db()
     worker_job = enqueue_job("download_translate", {"video_id": 7}, "等待下载")
     api_job = enqueue_job("daily_discovery", {}, "API 正在抓取")

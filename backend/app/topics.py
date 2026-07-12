@@ -12,7 +12,7 @@ from app.scoring import people_signals_for_video
 DEFAULT_TOPIC = {
     "name": "AI 科技采访（示例）",
     "description": "沿用原工作台能力的示例主题，可以编辑或新建其他主题。",
-    "keywords": ["AI interview", "人工智能 访谈", "大模型 访谈"],
+    "keywords": ["AI interview", "AI 访谈", "人工智能 访谈", "大模型 访谈"],
     "excluded_keywords": ["shorts", "招聘", "课程广告"],
     "focus_people": ["Sam Altman", "Dario Amodei", "Jensen Huang", "梁文锋"],
     "channel_terms": ["OpenAI", "Anthropic", "NVIDIA", "DeepSeek"],
@@ -26,7 +26,15 @@ def ensure_default_topic() -> dict:
     with get_connection() as conn:
         existing = conn.execute("SELECT * FROM topics ORDER BY id LIMIT 1").fetchone()
         if existing:
-            return topic_from_row(row_to_dict(existing))
+            topic = topic_from_row(row_to_dict(existing))
+            legacy_keywords = ["AI interview", "人工智能 访谈", "大模型 访谈"]
+            if topic["name"] == DEFAULT_TOPIC["name"] and topic["keywords"] == legacy_keywords:
+                conn.execute(
+                    "UPDATE topics SET keywords = ?, updated_at = ? WHERE id = ?",
+                    (_dump(DEFAULT_TOPIC["keywords"]), now_iso(), topic["id"]),
+                )
+                topic["keywords"] = list(DEFAULT_TOPIC["keywords"])
+            return topic
         timestamp = now_iso()
         cursor = conn.execute(
             """
@@ -267,7 +275,9 @@ def _clean_terms(values: list[object]) -> list[str]:
 def _term_matches(term: str, haystack: str, normalized_haystack: str) -> bool:
     lowered = term.lower().strip()
     normalized = _normalize_match_text(lowered)
-    return bool(lowered) and (lowered in haystack or bool(normalized) and normalized in normalized_haystack)
+    tokens = [token for token in re.split(r"[\s\-_·/]+", lowered) if token]
+    token_match = len(tokens) > 1 and all(_normalize_match_text(token) in normalized_haystack for token in tokens)
+    return bool(lowered) and (lowered in haystack or bool(normalized) and normalized in normalized_haystack or token_match)
 
 
 def _normalize_match_text(value: str) -> str:

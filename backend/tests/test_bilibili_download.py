@@ -9,7 +9,7 @@ from app.db import get_connection, init_db, now_iso
 
 
 def test_bilibili_download_accepts_completed_file_after_tool_warning(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("TECH_PR_DB_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setenv("TOPIC_WORKBENCH_DB_PATH", str(tmp_path / "app.db"))
     monkeypatch.setenv("DOWNLOAD_DIR", str(tmp_path / "downloads"))
     monkeypatch.setenv("OPENCLI_PREFLIGHT_ENABLED", "false")
     monkeypatch.setenv("OPENCLI_WINDOW_MODE", "foreground")

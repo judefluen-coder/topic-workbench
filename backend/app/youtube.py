@@ -238,7 +238,10 @@ def _sync_with_ytdlp_search(
 ) -> dict:
     items: list[dict] = []
     query_count = 0
-    for query in discovery_queries(topic, limit=8):
+    start, before = _query_date_bounds(published_after, published_before)
+    date_clause = f" after:{start} before:{before}" if start and before else ""
+    for base_query in discovery_queries(topic, limit=8):
+        query = f"{base_query}{date_clause}"
         query_count += 1
         items.extend(_run_ytdlp_search(query, min(limit_per_query, 3)))
         _record_source_query(topic_id, f"yt-dlp:{query}")

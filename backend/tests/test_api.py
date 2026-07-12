@@ -12,10 +12,10 @@ from fastapi.testclient import TestClient
 
 def make_client() -> TestClient:
     tmp = tempfile.TemporaryDirectory()
-    os.environ["TECH_PR_DB_PATH"] = str(Path(tmp.name) / "app.db")
-    os.environ["TECH_PR_UPLOAD_DIR"] = str(Path(tmp.name) / "uploads")
-    os.environ["TECH_PR_EXPORT_DIR"] = str(Path(tmp.name) / "exports")
-    os.environ["TECH_PR_TMP_DIR"] = str(Path(tmp.name) / "tmp")
+    os.environ["TOPIC_WORKBENCH_DB_PATH"] = str(Path(tmp.name) / "app.db")
+    os.environ["TOPIC_WORKBENCH_UPLOAD_DIR"] = str(Path(tmp.name) / "uploads")
+    os.environ["TOPIC_WORKBENCH_EXPORT_DIR"] = str(Path(tmp.name) / "exports")
+    os.environ["TOPIC_WORKBENCH_TMP_DIR"] = str(Path(tmp.name) / "tmp")
     os.environ["DOWNLOAD_DIR"] = str(Path(tmp.name) / "downloads")
     os.environ["YOUTUBE_API_KEY"] = ""
     os.environ["OPENAI_API_KEY"] = ""
@@ -213,6 +213,33 @@ def test_import_transcribe_clip_and_export() -> None:
     assert csv.status_code == 200
     assert "产品战略精修版" in csv.text
     assert csv.text.index("结尾观点") < csv.text.index("产品战略精修版")
+
+
+def test_authorized_media_file_upload_is_stored_with_a_safe_unique_name() -> None:
+    client = make_client()
+    client.post("/api/sync/youtube", json={})
+    video_id = client.get("/api/videos").json()[0]["id"]
+
+    first = client.post(
+        "/api/media/import",
+        data={"video_id": video_id, "authorization_note": "自动生成的授权测试素材", "delete_after_processing": "false"},
+        files={"file": ("sample.mp4", b"first-test-media", "video/mp4")},
+    )
+    second = client.post(
+        "/api/media/import",
+        data={"video_id": video_id, "authorization_note": "自动生成的授权测试素材", "delete_after_processing": "false"},
+        files={"file": ("sample.mp4", b"second-test-media", "video/mp4")},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    from app.db import get_connection
+
+    with get_connection() as conn:
+        paths = [row["stored_path"] for row in conn.execute("SELECT stored_path FROM media_assets WHERE video_id = ? AND kind = 'media' ORDER BY id", (video_id,)).fetchall()]
+    assert len(paths) == 2
+    assert paths[0] != paths[1]
+    assert all(Path(path).exists() for path in paths)
 
 
 def test_render_clips_registers_exported_sequence_asset() -> None:
