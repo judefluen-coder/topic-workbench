@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-label="Topic Workbench social preview">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#211a37"/><stop offset="1" stop-color="#153b45"/></linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f8fbfc"/><stop offset="1" stop-color="#eaf4f2"/></linearGradient>
+    <pattern id="grid" width="46" height="46" patternUnits="userSpaceOnUse"><path d="M46 0H0V46" fill="none" stroke="#ffffff" stroke-opacity=".055"/></pattern>
+  </defs>
+  <rect width="1280" height="640" fill="url(#bg)"/><rect width="1280" height="640" fill="url(#grid)"/>
+  <circle cx="1100" cy="80" r="340" fill="#1ac6a2" opacity=".09"/>
+  <rect x="62" y="58" width="320" height="40" rx="20" fill="#3b3155" stroke="#a58dd8" stroke-opacity=".65"/>
+  <text x="84" y="84" fill="#d8c9ff" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="17" font-weight="700" letter-spacing="1">LOCAL-FIRST · MULTI-TOPIC</text>
+  <text x="62" y="190" fill="#ffffff" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="63" font-weight="750">Topic Workbench</text>
+  <text x="64" y="252" fill="#e8e4f5" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="30" font-weight="600">让多个内容主题，各有自己的线索和素材</text>
+  <text x="64" y="297" fill="#e8e4f5" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="30" font-weight="600">仍共用一套字幕与粗剪工作流</text>
+  <rect x="62" y="368" width="510" height="116" rx="20" fill="#302e4d" stroke="#646681"/>
+  <text x="90" y="409" fill="#a8eedb" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="22" font-weight="600">多主题发现 · 来源筛选 · 日期范围</text>
+  <text x="90" y="449" fill="#cbd4ee" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="22" font-weight="600">字幕处理 · 片段排序 · 授权导出</text>
+  <text x="64" y="564" fill="#adb9cd" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="18">YouTube + B 站  ·  仅处理有权使用的素材</text>
+
+  <rect x="650" y="89" width="570" height="453" rx="27" fill="url(#card)"/>
+  <rect x="650" y="89" width="570" height="58" rx="27" fill="#dfece9"/>
+  <rect x="650" y="120" width="570" height="27" fill="#dfece9"/>
+  <circle cx="680" cy="119" r="6" fill="#f27c82"/><circle cx="702" cy="119" r="6" fill="#f7bd65"/><circle cx="724" cy="119" r="6" fill="#70cba9"/>
+  <text x="758" y="125" fill="#486570" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="17" font-weight="700">WORKFLOW SCHEMATIC</text>
+  <rect x="679" y="178" width="216" height="324" rx="17" fill="#e8e7f4"/>
+  <text x="704" y="213" fill="#423c67" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="18" font-weight="700">主题 / TOPICS</text>
+  <rect x="697" y="235" width="179" height="63" rx="12" fill="#ffffff" stroke="#c6bde6"/>
+  <circle cx="719" cy="266" r="7" fill="#8267bc"/><text x="738" y="272" fill="#37435a" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="17">AI 科技采访</text>
+  <rect x="697" y="312" width="179" height="63" rx="12" fill="#ffffff" stroke="#d0cbe6"/>
+  <circle cx="719" cy="343" r="7" fill="#31a79a"/><text x="738" y="349" fill="#37435a" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="17">自定义主题</text>
+  <rect x="697" y="389" width="179" height="63" rx="12" fill="#ffffff" stroke="#d0cbe6"/>
+  <text x="720" y="427" fill="#657487" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="17">+ 新建主题</text>
+  <path d="M911 339H938" stroke="#8396a3" stroke-width="3" stroke-linecap="round"/><path d="m931 331 8 8-8 8" fill="none" stroke="#8396a3" stroke-width="3"/>
+  <rect x="952" y="184" width="235" height="82" rx="14" fill="#ffffff" stroke="#b9d6d6"/>
+  <circle cx="976" cy="225" r="10" fill="#45a8bf"/><text x="998" y="231" fill="#315665" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="19" font-weight="700">发现素材</text>
+  <rect x="952" y="283" width="235" height="82" rx="14" fill="#ffffff" stroke="#b9d6d6"/>
+  <circle cx="976" cy="324" r="10" fill="#836ac0"/><text x="998" y="330" fill="#315665" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="19" font-weight="700">整理字幕</text>
+  <rect x="952" y="382" width="235" height="82" rx="14" fill="#ffffff" stroke="#b9d6d6"/>
+  <circle cx="976" cy="423" r="10" fill="#35af91"/><text x="998" y="429" fill="#315665" font-family="Arial, PingFang SC, Microsoft YaHei, sans-serif" font-size="19" font-weight="700">授权粗剪</text>
+  <path d="M1069 266V283M1069 365V382" stroke="#8aadb3" stroke-width="3" stroke-dasharray="5 5"/>
+</svg>
