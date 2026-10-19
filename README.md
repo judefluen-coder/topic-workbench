@@ -2,7 +2,7 @@
 
 Topic Workbench 是一个本地多主题视频素材工作台。用户可以为不同内容项目配置关键词、排除词、重点人物、频道线索和抓取来源，从 YouTube 与B站发现素材，再沿用统一的字幕处理、粗剪、排序和 MP4 导出流程。
 
-项目从 Tech PR Workbench 的稳定版本独立发展。两个项目拥有独立的 Git 仓库、数据库和 `storage/`，Topic Workbench 的改动不会影响原科技采访项目。
+项目从 Tech PR Workbench 的科技采访工作流发展而来，现在统一在 Topic Workbench 继续维护。科技采访是默认示例主题，多主题配置覆盖其他内容项目。原 Tech PR Workbench 的提交历史已合并进本仓库；旧版本仍可从 `legacy/tech-pr-workbench` 分支查看。本地数据库和 `storage/` 不会因为 Git 仓库合并而自动迁移。
 
 > 只下载、编辑和发布你有权处理的素材。发现阶段默认只保存公开元数据和原始链接。
 
