@@ -1,5 +1,7 @@
 # Tech PR Workbench
 
+> **项目已合并到 [Topic Workbench](https://github.com/judefluen-coder/topic-workbench)。** 科技采访现作为其中的默认示例主题继续维护；本仓库保留旧版本和原有公开演示以供查阅。合并前的代码也保存在新仓库的 `legacy/tech-pr-workbench` 分支。
+
 Local-first AI interview discovery, Chinese subtitle translation, and authorized clip preparation for tech PR teams.
 
 Tech PR Workbench 帮科技公司 PR、内容运营和创始人办公室把公开视频采访变成可复核的日报和可剪辑素材：先发现 AI/科技采访，保留原始链接和嘉宾线索，再为授权视频生成中文字幕、推荐高光片段并导出剪辑序列。
