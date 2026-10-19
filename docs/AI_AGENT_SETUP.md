@@ -8,7 +8,7 @@ The short answer: a coding agent can install most local dependencies if it has t
 
 ```text
 Please install and run this local project:
-https://github.com/judefluen-coder/tech-pr-workbench
+https://github.com/judefluen-coder/topic-workbench
 
 Goal:
 - Make the app available at http://127.0.0.1:5173
